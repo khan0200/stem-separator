@@ -51,7 +51,7 @@ class DualModeSeparatorEngine:
         from audio_separator.separator import Separator
 
         if progress_cb:
-            progress_cb(10, "Initializing BS-RoFormer AI model...")
+            progress_cb(10, "Initializing AI separation engine...")
 
         work_dir.mkdir(parents=True, exist_ok=True)
 
@@ -65,11 +65,11 @@ class DualModeSeparatorEngine:
         )
 
         if progress_cb:
-            progress_cb(18, "Loading BS-RoFormer neural weights (SDR 12.97)...")
+            progress_cb(18, "Loading AI neural models...")
         separator.load_model(self.roformer_model)
 
         if progress_cb:
-            progress_cb(25, "BS-RoFormer is separating vocals and instrumental stems...")
+            progress_cb(25, "Separating vocals and instrumental tracks...")
 
         # Run inference
         output_files = separator.separate(
@@ -124,7 +124,7 @@ class DualModeSeparatorEngine:
         Decomposes instrumental into drums, bass, and other.
         """
         if progress_cb:
-            progress_cb(55, "Stage 2/2: Initializing Demucs for instrumental decomposition...")
+            progress_cb(55, "Decomposing instrumental tracks...")
 
         demucs_out_dir = work_dir / "demucs_temp"
         demucs_out_dir.mkdir(parents=True, exist_ok=True)
@@ -142,7 +142,7 @@ class DualModeSeparatorEngine:
 
         logger.info(f"Running Demucs on instrumental: {' '.join(cmd)}")
         if progress_cb:
-            progress_cb(60, "Stage 2/2: Demucs is separating Drums, Bass & Instruments...")
+            progress_cb(60, "Separating drums, bass and instruments...")
 
         process = subprocess.Popen(
             cmd,
@@ -164,9 +164,9 @@ class DualModeSeparatorEngine:
                     match = pattern.search(buffer)
                     if match and progress_cb:
                         pct = int(match.group(1))
-                        # Scale Demucs progress from 60% to 90%
+                        # Scale progress from 60% to 90%
                         scaled_pct = 60 + int((pct / 100.0) * 30)
-                        progress_cb(scaled_pct, f"Stage 2/2: Demucs separating instruments ({pct}%)...")
+                        progress_cb(scaled_pct, f"Extracting instrumental stems ({pct}%)...")
                     buffer = ""
 
         stdout, stderr = process.communicate()
@@ -216,7 +216,7 @@ class DualModeSeparatorEngine:
         stems = self._run_roformer(input_audio, output_dir, progress_cb)
 
         if progress_cb:
-            progress_cb(92, "Finalizing 2-stem separation...")
+            progress_cb(92, "Mastering audio stems...")
 
         return {
             "vocals": stems["vocals"],
@@ -238,16 +238,16 @@ class DualModeSeparatorEngine:
         output_dir.mkdir(parents=True, exist_ok=True)
         logger.info(f"Starting 4-Stem Two-Stage Pipeline for {input_audio.name}")
 
-        # Stage 1: BS-RoFormer
+        # Stage 1: Isolate vocals
         if progress_cb:
-            progress_cb(5, "Stage 1/2: Isolating clean vocals with BS-RoFormer...")
+            progress_cb(5, "Isolating vocal harmonics...")
 
         roformer_stems = self._run_roformer(input_audio, output_dir, progress_cb)
         clean_vocals = roformer_stems["vocals"]
         clean_instrumental = roformer_stems["instrumental"]
 
         if progress_cb:
-            progress_cb(50, "Stage 1/2 complete. Isolated instrumental ready for Demucs...")
+            progress_cb(50, "Vocals isolated. Processing instrumental stems...")
 
         # Stage 2: Demucs on ONLY clean_instrumental
         demucs_stems = self._run_demucs_on_instrumental(clean_instrumental, output_dir, progress_cb)
@@ -261,6 +261,6 @@ class DualModeSeparatorEngine:
         }
 
         if progress_cb:
-            progress_cb(92, "Finalizing 4-stem pipeline and aligning tracks...")
+            progress_cb(92, "Mastering and aligning audio tracks...")
 
         return final_stems

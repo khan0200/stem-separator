@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Audio Stem Studio - Demucs AI</title>
+    <title>Audio Stem Studio</title>
     <!-- Inter & JetBrains Mono Fonts -->
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -2140,27 +2140,240 @@
             cursor: not-allowed;
         }
 
-        /* Progress Screen */
+        /* AI Stem Separation Progress Screen */
         .processing-box {
-            padding: 50px 20px;
+            padding: 40px 20px 48px;
             text-align: center;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            position: relative;
+        }
+
+        /* Central Multi-Wave AI Separation Node */
+        .ai-separation-orb {
+            position: relative;
+            width: 130px;
+            height: 130px;
+            margin: 0 auto 26px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        /* Concentric rotating colored frequency rings */
+        .ai-orb-ring {
+            position: absolute;
+            inset: 0;
+            border-radius: 50%;
+            border: 2px solid transparent;
+            animation: orbRotate 6s linear infinite;
+        }
+
+        .ring-vocals {
+            border-top-color: #0A84FF;
+            border-right-color: rgba(10, 132, 255, 0.4);
+            filter: drop-shadow(0 0 10px rgba(10, 132, 255, 0.8));
+            animation-duration: 4s;
+        }
+
+        .ring-drums {
+            inset: -8px;
+            border-bottom-color: #FF375F;
+            border-left-color: rgba(255, 55, 95, 0.4);
+            filter: drop-shadow(0 0 10px rgba(255, 55, 95, 0.8));
+            animation-duration: 5s;
+            animation-direction: reverse;
+        }
+
+        .ring-bass {
+            inset: -16px;
+            border-left-color: #BF5AF2;
+            border-top-color: rgba(191, 90, 242, 0.4);
+            filter: drop-shadow(0 0 10px rgba(191, 90, 242, 0.8));
+            animation-duration: 6.5s;
+        }
+
+        .ring-other {
+            inset: -24px;
+            border-right-color: #30D158;
+            border-bottom-color: rgba(48, 209, 88, 0.4);
+            filter: drop-shadow(0 0 10px rgba(48, 209, 88, 0.8));
+            animation-duration: 6s;
+            animation-direction: reverse;
+        }
+
+        .ai-orb-core {
+            width: 62px;
+            height: 62px;
+            border-radius: 50%;
+            background: linear-gradient(135deg, #0A84FF, #BF5AF2);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: #fff;
+            box-shadow: 0 0 30px rgba(10, 132, 255, 0.7);
+            animation: orbPulse 2.2s ease-in-out infinite alternate;
+            z-index: 2;
+        }
+
+        @keyframes orbRotate {
+            from { transform: rotate(0deg); }
+            to { transform: rotate(360deg); }
+        }
+
+        @keyframes orbPulse {
+            0% { transform: scale(0.94); box-shadow: 0 0 20px rgba(10, 132, 255, 0.5); }
+            100% { transform: scale(1.08); box-shadow: 0 0 36px rgba(191, 90, 242, 0.9); }
+        }
+
+        /* Animated Stem Frequency Spectrum */
+        .separation-spectrum {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 5px;
+            height: 44px;
+            margin: 0 auto 20px;
+        }
+
+        .spectrum-bar {
+            width: 4px;
+            border-radius: 4px;
+            animation: spectrumBounce 1.2s ease-in-out infinite alternate;
+        }
+
+        .spectrum-bar:nth-child(4n+1) {
+            background: #0A84FF;
+            box-shadow: 0 0 8px rgba(10, 132, 255, 0.7);
+            animation-delay: 0.1s;
+        }
+        .spectrum-bar:nth-child(4n+2) {
+            background: #FF375F;
+            box-shadow: 0 0 8px rgba(255, 55, 95, 0.7);
+            animation-delay: 0.35s;
+        }
+        .spectrum-bar:nth-child(4n+3) {
+            background: #BF5AF2;
+            box-shadow: 0 0 8px rgba(191, 90, 242, 0.7);
+            animation-delay: 0.55s;
+        }
+        .spectrum-bar:nth-child(4n+4) {
+            background: #30D158;
+            box-shadow: 0 0 8px rgba(48, 209, 88, 0.7);
+            animation-delay: 0.2s;
+        }
+
+        @keyframes spectrumBounce {
+            0% { height: 6px; opacity: 0.35; }
+            100% { height: 42px; opacity: 1; }
+        }
+
+        /* Separating Stem Chips Preview */
+        .separation-stems-stream {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            margin: 0 auto 22px;
+            flex-wrap: wrap;
+            justify-content: center;
+        }
+
+        .stream-node {
+            display: inline-flex;
+            align-items: center;
+            gap: 7px;
+            padding: 6px 14px;
+            border-radius: 20px;
+            background: rgba(255, 255, 255, 0.04);
+            border: 1px solid rgba(255, 255, 255, 0.08);
+            font-size: 13px;
+            font-weight: 600;
+            color: #fff;
+            animation: nodeFloat 2.2s ease-in-out infinite alternate;
+        }
+
+        .stream-node.node-vocal {
+            border-color: rgba(10, 132, 255, 0.35);
+            background: rgba(10, 132, 255, 0.1);
+            color: #64D2FF;
+            animation-delay: 0.1s;
+        }
+        .stream-node.node-drums {
+            border-color: rgba(255, 55, 95, 0.35);
+            background: rgba(255, 55, 95, 0.1);
+            color: #FF375F;
+            animation-delay: 0.4s;
+        }
+        .stream-node.node-bass {
+            border-color: rgba(191, 90, 242, 0.35);
+            background: rgba(191, 90, 242, 0.1);
+            color: #BF5AF2;
+            animation-delay: 0.2s;
+        }
+        .stream-node.node-instrumental,
+        .stream-node.node-other {
+            border-color: rgba(48, 209, 88, 0.35);
+            background: rgba(48, 209, 88, 0.1);
+            color: #30D158;
+            animation-delay: 0.5s;
+        }
+
+        .node-pulse-dot {
+            width: 7px;
+            height: 7px;
+            border-radius: 50%;
+            background: currentColor;
+            box-shadow: 0 0 8px currentColor;
+            animation: dotBlink 1.4s infinite;
+        }
+
+        @keyframes nodeFloat {
+            0% { transform: translateY(0); }
+            100% { transform: translateY(-4px); }
+        }
+
+        @keyframes dotBlink {
+            0%, 100% { opacity: 1; transform: scale(1); }
+            50% { opacity: 0.4; transform: scale(0.8); }
         }
 
         .progress-bar-shell {
             width: 100%;
             max-width: 520px;
-            height: 8px;
-            background: rgba(255, 255, 255, 0.1);
-            border-radius: 10px;
+            height: 9px;
+            background: rgba(255, 255, 255, 0.08);
+            border-radius: 12px;
             overflow: hidden;
-            margin: 24px auto 16px;
+            margin: 18px auto 14px;
+            position: relative;
         }
 
         .progress-bar-inner {
             height: 100%;
-            background: linear-gradient(90deg, #0A84FF, #BF5AF2);
+            background: linear-gradient(90deg, #0A84FF, #7928CA, #BF5AF2, #30D158);
             box-shadow: 0 0 16px rgba(10, 132, 255, 0.7);
-            transition: width 0.3s ease;
+            border-radius: 12px;
+            transition: width 0.35s ease;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .progress-bar-inner::after {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.45), transparent);
+            animation: barShimmer 1.8s infinite;
+        }
+
+        @keyframes barShimmer {
+            0% { transform: translateX(-100%); }
+            100% { transform: translateX(100%); }
         }
 
         /* Toast / Notification */
@@ -2239,7 +2452,7 @@
                     </div>
                     <div class="brand-info">
                         <span class="brand-name">AUDIO STUDIO</span>
-                        <span class="brand-badge">DEMUCS AI</span>
+                        <span class="brand-badge">PRO AI</span>
                     </div>
                 </div>
 
@@ -2485,22 +2698,62 @@
                 <p v-if="errorMessage" class="toast-msg">{{ errorMessage }}</p>
             </div>
 
-            <!-- VIEW B: Processing Screen -->
+            <!-- VIEW B: Processing Screen (Futuristic AI Stem Separation Animation) -->
             <div v-else-if="viewState === 'processing'" class="processing-box">
-                <div class="album-art" style="margin: 0 auto 16px; width: 64px; height: 64px;">
-                    <svg width="34" height="34" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2">
-                        <path d="M9 18V5l12-2v13"></path>
-                        <circle cx="6" cy="18" r="3"></circle>
-                        <circle cx="18" cy="16" r="3"></circle>
-                    </svg>
+                <!-- 1. Central Multi-Wave AI Separation Node -->
+                <div class="ai-separation-orb">
+                    <div class="ai-orb-ring ring-vocals"></div>
+                    <div class="ai-orb-ring ring-drums"></div>
+                    <div class="ai-orb-ring ring-bass"></div>
+                    <div class="ai-orb-ring ring-other"></div>
+                    <div class="ai-orb-core">
+                        <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+                            <path d="M12 2v20M17 5v14M7 8v8M22 10v4M2 10v4" />
+                        </svg>
+                    </div>
                 </div>
-                <h2 style="font-size: 20px; font-weight: 700; margin-bottom: 6px;">AI Stem Separation in Progress</h2>
-                <p style="color: var(--text-secondary); font-size: 14px;">{{ statusMessage || 'AI model is processing audio stems...' }}</p>
 
+                <!-- 2. Animated Audio Spectrum Bars -->
+                <div class="separation-spectrum">
+                    <div v-for="i in 24" :key="i" class="spectrum-bar"></div>
+                </div>
+
+                <!-- 3. Dynamic Stem Decomposition Stream -->
+                <div class="separation-stems-stream">
+                    <div class="stream-node node-vocal">
+                        <span class="node-pulse-dot"></span>
+                        <span>🎤 Vocal</span>
+                    </div>
+                    <template v-if="separationMode === '2stems'">
+                        <div class="stream-node node-instrumental">
+                            <span class="node-pulse-dot"></span>
+                            <span>🎹 Instrumental</span>
+                        </div>
+                    </template>
+                    <template v-else>
+                        <div class="stream-node node-drums">
+                            <span class="node-pulse-dot"></span>
+                            <span>🥁 Drums</span>
+                        </div>
+                        <div class="stream-node node-bass">
+                            <span class="node-pulse-dot"></span>
+                            <span>🎸 Bass</span>
+                        </div>
+                        <div class="stream-node node-other">
+                            <span class="node-pulse-dot"></span>
+                            <span>🎷 Other</span>
+                        </div>
+                    </template>
+                </div>
+
+                <h2 style="font-size: 20px; font-weight: 700; margin-bottom: 6px; letter-spacing: -0.02em;">Separating Audio Stems</h2>
+                <p style="color: var(--text-secondary); font-size: 13.5px;">{{ cleanStatusMessage }}</p>
+
+                <!-- 4. Progress bar with shimmer -->
                 <div class="progress-bar-shell">
                     <div class="progress-bar-inner" :style="{ width: progressPercent + '%' }"></div>
                 </div>
-                <span style="font-family: 'JetBrains Mono', monospace; font-size: 14px; font-weight: 600; color: var(--accent-blue);">
+                <span style="font-family: 'JetBrains Mono', monospace; font-size: 14px; font-weight: 700; color: var(--accent-blue);">
                     {{ progressPercent }}%
                 </span>
             </div>
@@ -2718,7 +2971,7 @@
                     <span>PLAYLIST MANAGER</span>
                 </div>
                 <h2>Musiqa va Pleylistlar Kutubxonasi</h2>
-                <p>Barcha yuklangan musiqalaringiz va Demucs orqali ajratilgan stem treklarni pleylistlarga jamlang.</p>
+                <p>Barcha yuklangan musiqalaringiz va AI orqali ajratilgan stem treklarni pleylistlarga jamlang.</p>
             </div>
 
             <!-- Action bar -->
@@ -3056,7 +3309,7 @@
                         case 'playlist': return 'Musiqa pleylistlari va ajratilgan stemlar to\'plamini boshqaring';
                         case 'edit': return 'Stemlarni qirqish, tonallikni o\'zgartirish va miksni sozlash';
                         case 'stem':
-                        default: return 'Separate any song into high-quality stems using AI (BS-RoFormer & Demucs)';
+                        default: return 'Separate any song into high-quality stems using AI';
                     }
                 });
 
@@ -3086,6 +3339,15 @@
                 const progressPercent = ref(0);
                 const statusMessage = ref('');
                 const errorMessage = ref('');
+
+                const cleanStatusMessage = computed(() => {
+                    let msg = statusMessage.value || 'Separating audio stems into clean tracks...';
+                    return msg.replace(/BS-RoFormer/gi, 'AI')
+                              .replace(/Demucs/gi, 'AI')
+                              .replace(/neural weights \(.*?\)/gi, 'AI neural models')
+                              .replace(/Stage 1\/2:\s*/gi, '')
+                              .replace(/Stage 2\/2:\s*/gi, '');
+                });
 
                 // Master Playback Engine State
                 const isMasterPlaying = ref(false);
@@ -3711,6 +3973,7 @@
                     separationMode,
                     progressPercent,
                     statusMessage,
+                    cleanStatusMessage,
                     errorMessage,
                     isMasterPlaying,
                     masterCurrentTime,
