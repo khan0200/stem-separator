@@ -1513,6 +1513,232 @@
             color: #fff;
         }
 
+        /* Stem Mute (M) Button replacing ... shashlik menu */
+        .btn-stem-mute {
+            width: 32px;
+            height: 32px;
+            border-radius: 8px;
+            background: rgba(255, 255, 255, 0.05);
+            border: 1px solid rgba(255, 255, 255, 0.12);
+            color: rgba(255, 255, 255, 0.7);
+            font-size: 13px;
+            font-weight: 800;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+            user-select: none;
+        }
+
+        .btn-stem-mute:hover {
+            background: rgba(255, 255, 255, 0.12);
+            color: #fff;
+            border-color: rgba(255, 255, 255, 0.25);
+            transform: scale(1.05);
+        }
+
+        .btn-stem-mute.active-muted {
+            background: #FF453A;
+            border-color: #FF453A;
+            color: #ffffff;
+            box-shadow: 0 0 14px rgba(255, 69, 58, 0.6);
+        }
+
+        /* Download / Export Options Modal */
+        .modal-backdrop {
+            position: fixed;
+            inset: 0;
+            background: rgba(0, 0, 0, 0.75);
+            backdrop-filter: blur(12px);
+            -webkit-backdrop-filter: blur(12px);
+            z-index: 2000;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 20px;
+            animation: fadeInModal 0.2s ease-out;
+        }
+
+        @keyframes fadeInModal {
+            from { opacity: 0; }
+            to { opacity: 1; }
+        }
+
+        .export-modal-card {
+            width: 100%;
+            max-width: 480px;
+            background: #141122;
+            border: 1px solid rgba(255, 255, 255, 0.12);
+            border-radius: 20px;
+            box-shadow: 0 24px 60px rgba(0, 0, 0, 0.6), 0 0 30px rgba(10, 132, 255, 0.15);
+            padding: 24px 26px;
+            box-sizing: border-box;
+            position: relative;
+            animation: slideUpModal 0.24s cubic-bezier(0.16, 1, 0.3, 1);
+        }
+
+        @keyframes slideUpModal {
+            from { transform: translateY(16px) scale(0.98); opacity: 0; }
+            to { transform: translateY(0) scale(1); opacity: 1; }
+        }
+
+        .modal-head {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin-bottom: 20px;
+        }
+
+        .modal-title-row {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .modal-title-row h3 {
+            font-size: 18px;
+            font-weight: 700;
+            color: #fff;
+            margin: 0;
+        }
+
+        .btn-modal-close {
+            width: 32px;
+            height: 32px;
+            border-radius: 50%;
+            background: rgba(255, 255, 255, 0.06);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            color: var(--text-secondary);
+            font-size: 16px;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: all 0.2s;
+        }
+
+        .btn-modal-close:hover {
+            background: rgba(255, 255, 255, 0.14);
+            color: #fff;
+        }
+
+        .form-group {
+            margin-bottom: 18px;
+        }
+
+        .form-group label {
+            display: block;
+            font-size: 12px;
+            font-weight: 700;
+            color: var(--text-secondary);
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            margin-bottom: 8px;
+        }
+
+        .modal-input {
+            width: 100%;
+            padding: 12px 14px;
+            border-radius: 12px;
+            background: rgba(255, 255, 255, 0.05);
+            border: 1px solid rgba(255, 255, 255, 0.12);
+            color: #fff;
+            font-size: 14px;
+            font-family: inherit;
+            box-sizing: border-box;
+            outline: none;
+            transition: all 0.2s;
+        }
+
+        .modal-input:focus {
+            border-color: var(--accent-blue);
+            background: rgba(10, 132, 255, 0.08);
+            box-shadow: 0 0 16px rgba(10, 132, 255, 0.25);
+        }
+
+        /* Format & Quality Selector Chips */
+        .chip-group {
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap;
+        }
+
+        .modal-chip {
+            flex: 1;
+            min-width: 100px;
+            padding: 10px 14px;
+            border-radius: 12px;
+            background: rgba(255, 255, 255, 0.04);
+            border: 1px solid rgba(255, 255, 255, 0.09);
+            color: var(--text-secondary);
+            font-size: 13px;
+            font-weight: 600;
+            cursor: pointer;
+            text-align: center;
+            transition: all 0.2s;
+            user-select: none;
+        }
+
+        .modal-chip:hover {
+            background: rgba(255, 255, 255, 0.08);
+            color: #fff;
+        }
+
+        .modal-chip.active {
+            background: rgba(10, 132, 255, 0.18);
+            border-color: var(--accent-blue);
+            color: #fff;
+            box-shadow: 0 0 16px rgba(10, 132, 255, 0.25);
+        }
+
+        .modal-actions {
+            display: flex;
+            gap: 12px;
+            margin-top: 24px;
+        }
+
+        .btn-modal-cancel {
+            flex: 1;
+            padding: 12px 18px;
+            border-radius: 14px;
+            background: rgba(255, 255, 255, 0.06);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            color: var(--text-secondary);
+            font-size: 14px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .btn-modal-cancel:hover {
+            background: rgba(255, 255, 255, 0.1);
+            color: #fff;
+        }
+
+        .btn-modal-download {
+            flex: 2;
+            padding: 12px 24px;
+            border-radius: 14px;
+            background: linear-gradient(135deg, #0A84FF, #0060df);
+            border: none;
+            color: #fff;
+            font-size: 14px;
+            font-weight: 700;
+            cursor: pointer;
+            box-shadow: 0 6px 20px rgba(10, 132, 255, 0.45);
+            transition: all 0.2s;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 8px;
+        }
+
+        .btn-modal-download:hover:not(:disabled) {
+            transform: translateY(-2px);
+            box-shadow: 0 8px 28px rgba(10, 132, 255, 0.65);
+        }
+
         /* Bottom Master Studio Dock (Fixed to Screen Bottom) */
         .master-dock {
             position: fixed;
@@ -2378,21 +2604,20 @@
                             </svg>
                         </div>
 
-                        <!-- 5. Actions (Download stem & Options) -->
+                        <!-- 5. Actions (Download stem options & Mute M) -->
                         <div class="stem-actions">
-                            <a class="btn-stem-action" :href="'/api/stream/' + activeTaskId + '/' + stem.id" :download="stem.id + '.mp3'" :title="'Download ' + stem.name + ' (MP3)'">
+                            <button class="btn-stem-action" :title="'Download ' + stem.name + ' (MP3 / WAV)'" @click="openDownloadModal(stem.id)">
                                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                                     <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
                                     <polyline points="7 10 12 15 17 10"></polyline>
                                     <line x1="12" y1="3" x2="12" y2="15"></line>
                                 </svg>
-                            </a>
-                            <button class="btn-stem-action" title="Stem Options" @click="toggleMute(stem.id)">
-                                <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
-                                    <circle cx="12" cy="12" r="2"></circle>
-                                    <circle cx="19" cy="12" r="2"></circle>
-                                    <circle cx="5" cy="12" r="2"></circle>
-                                </svg>
+                            </button>
+                            <button class="btn-stem-mute" 
+                                    :class="{ 'active-muted': stem.muted }" 
+                                    :title="stem.muted ? 'Unmute ' + stem.name : 'Mute ' + stem.name" 
+                                    @click="toggleMute(stem.id)">
+                                M
                             </button>
                         </div>
                     </div>
@@ -2471,14 +2696,14 @@
                     Upload New
                 </button>
 
-                <a class="btn-dock-download" :href="'/api/download/' + activeTaskId" download="audio_stems.zip" title="Download All 4 Stems Archive">
+                <button class="btn-dock-download" title="Download Options (MP3 / WAV)" @click="openDownloadModal('all')">
                     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                         <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
                         <polyline points="7 10 12 15 17 10"></polyline>
                         <line x1="12" y1="3" x2="12" y2="15"></line>
                     </svg>
                     Download All
-                </a>
+                </button>
             </div>
         </div>
     </div>
@@ -2690,6 +2915,77 @@
         <span>{{ toastNotification }}</span>
     </div>
 </transition>
+
+<!-- Download / Export Options Modal -->
+<div v-if="isDownloadModalOpen" class="modal-backdrop" @click.self="closeDownloadModal">
+    <div class="export-modal-card">
+        <div class="modal-head">
+            <div class="modal-title-row">
+                <span style="font-size: 20px;">💾</span>
+                <h3>{{ exportModalTitle }}</h3>
+            </div>
+            <button class="btn-modal-close" @click="closeDownloadModal">✕</button>
+        </div>
+
+        <!-- 1. Custom File Name Input -->
+        <div class="form-group">
+            <label>File Name</label>
+            <input type="text" class="modal-input" v-model="exportForm.filename" placeholder="Enter file name before saving" @keyup.enter="executeDownload">
+        </div>
+
+        <!-- 2. Format Selection (MP3 vs WAV) -->
+        <div class="form-group">
+            <label>Audio Format</label>
+            <div class="chip-group">
+                <div class="modal-chip" :class="{ active: exportForm.format === 'mp3' }" @click="selectExportFormat('mp3')">
+                    🎵 MP3
+                </div>
+                <div class="modal-chip" :class="{ active: exportForm.format === 'wav' }" @click="selectExportFormat('wav')">
+                    🎛️ WAV (Lossless)
+                </div>
+            </div>
+        </div>
+
+        <!-- 3. Quality Selection -->
+        <div class="form-group">
+            <label>Quality & Bitrate</label>
+            <!-- MP3 Qualities -->
+            <div v-if="exportForm.format === 'mp3'" class="chip-group">
+                <div class="modal-chip" :class="{ active: exportForm.quality === '320k' }" @click="exportForm.quality = '320k'">
+                    320 kbps (High)
+                </div>
+                <div class="modal-chip" :class="{ active: exportForm.quality === '256k' }" @click="exportForm.quality = '256k'">
+                    256 kbps (Standard)
+                </div>
+                <div class="modal-chip" :class="{ active: exportForm.quality === '192k' }" @click="exportForm.quality = '192k'">
+                    192 kbps (Compact)
+                </div>
+            </div>
+
+            <!-- WAV Qualities -->
+            <div v-else class="chip-group">
+                <div class="modal-chip" :class="{ active: exportForm.quality === 'wav16' }" @click="exportForm.quality = 'wav16'">
+                    16-bit (44.1 kHz)
+                </div>
+                <div class="modal-chip" :class="{ active: exportForm.quality === 'wav24' }" @click="exportForm.quality = 'wav24'">
+                    24-bit (48 kHz Studio)
+                </div>
+            </div>
+        </div>
+
+        <div class="modal-actions">
+            <button class="btn-modal-cancel" @click="closeDownloadModal">Cancel</button>
+            <button class="btn-modal-download" :disabled="exportForm.isDownloading" @click="executeDownload">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                    <polyline points="7 10 12 15 17 10"></polyline>
+                    <line x1="12" y1="3" x2="12" y2="15"></line>
+                </svg>
+                {{ exportForm.isDownloading ? 'Preparing...' : 'Download ' + exportForm.format.toUpperCase() }}
+            </button>
+        </div>
+    </div>
+</div>
 </div>
 
     <!-- Vue 3 Application Logic -->
@@ -3296,6 +3592,81 @@
                     return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
                 };
 
+                // ==================================================
+                // DOWNLOAD / EXPORT MODAL LOGIC
+                // ==================================================
+                const isDownloadModalOpen = ref(false);
+                const exportForm = reactive({
+                    targetStem: 'all',
+                    stemName: 'All Stems',
+                    filename: '',
+                    format: 'mp3',
+                    quality: '320k',
+                    isDownloading: false
+                });
+
+                const exportModalTitle = computed(() => {
+                    if (exportForm.targetStem === 'all') return 'Download All Stems';
+                    return `Download ${exportForm.stemName}`;
+                });
+
+                const selectExportFormat = (fmt) => {
+                    exportForm.format = fmt;
+                    if (fmt === 'mp3') {
+                        if (!['320k', '256k', '192k'].includes(exportForm.quality)) {
+                            exportForm.quality = '320k';
+                        }
+                    } else {
+                        if (!['wav16', 'wav24'].includes(exportForm.quality)) {
+                            exportForm.quality = 'wav16';
+                        }
+                    }
+                };
+
+                const openDownloadModal = (target) => {
+                    exportForm.targetStem = target;
+                    const baseTitle = (activeSongTitle.value || 'Song').replace(/\.[^/.]+$/, "");
+                    if (target === 'all') {
+                        exportForm.stemName = 'All Stems';
+                        exportForm.filename = `${baseTitle} - Stems`;
+                    } else {
+                        const found = stemsList.find(s => s.id === target);
+                        exportForm.stemName = found ? found.name : target;
+                        exportForm.filename = `${baseTitle} - ${exportForm.stemName}`;
+                    }
+                    exportForm.isDownloading = false;
+                    isDownloadModalOpen.value = true;
+                };
+
+                const closeDownloadModal = () => {
+                    isDownloadModalOpen.value = false;
+                };
+
+                const executeDownload = () => {
+                    if (!activeTaskId.value) return;
+                    exportForm.isDownloading = true;
+
+                    let url = '';
+                    const cleanFn = encodeURIComponent(exportForm.filename.trim());
+                    if (exportForm.targetStem === 'all') {
+                        url = `/api/export-all/${encodeURIComponent(activeTaskId.value)}?format=${exportForm.format}&quality=${exportForm.quality}&filename=${cleanFn}`;
+                    } else {
+                        url = `/api/export/${encodeURIComponent(activeTaskId.value)}/${encodeURIComponent(exportForm.targetStem)}?format=${exportForm.format}&quality=${exportForm.quality}&filename=${cleanFn}`;
+                    }
+
+                    const a = document.createElement('a');
+                    a.href = url;
+                    a.style.display = 'none';
+                    document.body.appendChild(a);
+                    a.click();
+                    document.body.removeChild(a);
+
+                    setTimeout(() => {
+                        exportForm.isDownloading = false;
+                        closeDownloadModal();
+                    }, 800);
+                };
+
                 // Lifecycle
                 onMounted(() => {
                     loadTask(activeTaskId.value);
@@ -3364,7 +3735,14 @@
                     startSeparation,
                     resetToUpload,
                     formatTime,
-                    formatFileSize
+                    formatFileSize,
+                    isDownloadModalOpen,
+                    exportForm,
+                    exportModalTitle,
+                    selectExportFormat,
+                    openDownloadModal,
+                    closeDownloadModal,
+                    executeDownload
                 };
             }
         }).mount('#app');

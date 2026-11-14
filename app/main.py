@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Dict, Any, Optional
 from app.separator_engine import DualModeSeparatorEngine
 
-from fastapi import FastAPI, UploadFile, File, Form, HTTPException, BackgroundTasks, Request
+from fastapi import FastAPI, UploadFile, File, Form, HTTPException, BackgroundTasks, Request, Query
 from fastapi.responses import HTMLResponse, JSONResponse, FileResponse
 from fastapi.templating import Jinja2Templates
 from fastapi.staticfiles import StaticFiles
@@ -534,4 +534,138 @@ async def stream_stem(task_id: str, stem_name: str):
         path=stem_path,
         media_type="audio/mpeg",
         filename=f"{stem_name}.mp3"
+    )
+
+
+def export_audio_file(src_path: Path, dest_path: Path, format_type: str, quality: str):
+    """
+    Converts audio using ffmpeg to requested format (MP3/WAV) and quality.
+    Caches the result in dest_path.
+    """
+    if dest_path.exists() and dest_path.stat().st_size > 0:
+        return dest_path
+
+    dest_path.parent.mkdir(parents=True, exist_ok=True)
+    venv_scripts = Path(sys.executable).parent
+    ffmpeg_bin = venv_scripts / "ffmpeg.exe"
+    if not ffmpeg_bin.exists():
+        ffmpeg_bin = Path("ffmpeg")
+
+    cmd = [str(ffmpeg_bin), "-y", "-i", str(src_path)]
+    if format_type == "wav":
+        if quality == "wav24":
+            cmd.extend(["-c:a", "pcm_s24le", "-ar", "48000"])
+        else:  # wav16 default
+            cmd.extend(["-c:a", "pcm_s16le", "-ar", "44100"])
+    else:  # mp3
+        bitrate = "320k" if quality == "320k" else ("192k" if quality == "192k" else "256k")
+        cmd.extend(["-c:a", "libmp3lame", "-b:a", bitrate, "-ar", "44100"])
+
+    cmd.append(str(dest_path))
+    res = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    if res.returncode != 0:
+        logger.error(f"FFmpeg conversion failed: {res.stderr}")
+        raise RuntimeError("Audio conversion failed.")
+    return dest_path
+
+
+@app.get("/api/export/{task_id}/{stem_name}")
+async def export_single_stem(
+    task_id: str,
+    stem_name: str,
+    format: str = Query("mp3"),
+    quality: str = Query("256k"),
+    filename: Optional[str] = Query(None)
+):
+    stem_name = stem_name.lower()
+    if stem_name not in ALLOWED_STEM_NAMES:
+        raise HTTPException(status_code=400, detail="Invalid stem name requested.")
+
+    task_info = get_or_restore_task(task_id)
+    if not task_info or task_info.get("status") != "completed":
+        raise HTTPException(status_code=404, detail="Audio stem not available.")
+
+    stems_dir_str = task_info.get("stems_dir")
+    if not stems_dir_str:
+        raise HTTPException(status_code=404, detail="Stem directory not found.")
+
+    src_stem = Path(stems_dir_str) / f"{stem_name}.mp3"
+    if not src_stem.exists():
+        raise HTTPException(status_code=404, detail="Requested stem file not found.")
+
+    format_type = "wav" if format.lower() == "wav" else "mp3"
+    task_dir = DATA_DIR / task_id
+    exports_dir = task_dir / "exports"
+    cached_dest = exports_dir / f"{stem_name}_{quality}.{format_type}"
+
+    try:
+        export_audio_file(src_stem, cached_dest, format_type, quality)
+    except Exception as e:
+        logger.error(f"Export error for {task_id} / {stem_name}: {e}")
+        raise HTTPException(status_code=500, detail="Failed to process audio export.")
+
+    if not filename:
+        song_title = task_info.get("original_name", "Track")
+        if song_title.lower().endswith(".mp3") or song_title.lower().endswith(".wav"):
+            song_title = Path(song_title).stem
+        filename = f"{song_title} - {stem_name.capitalize()}"
+
+    clean_name = re.sub(r'[^\w\s\-\.]', '', filename).strip() or stem_name
+    if not clean_name.lower().endswith(f".{format_type}"):
+        clean_name += f".{format_type}"
+
+    return FileResponse(
+        path=cached_dest,
+        media_type="audio/wav" if format_type == "wav" else "audio/mpeg",
+        filename=clean_name
+    )
+
+
+@app.get("/api/export-all/{task_id}")
+async def export_all_stems(
+    task_id: str,
+    format: str = Query("mp3"),
+    quality: str = Query("256k"),
+    filename: Optional[str] = Query(None)
+):
+    task_info = get_or_restore_task(task_id)
+    if not task_info or task_info.get("status") != "completed":
+        raise HTTPException(status_code=404, detail="Stems not ready or task not found.")
+
+    stems_dir_str = task_info.get("stems_dir")
+    if not stems_dir_str:
+        raise HTTPException(status_code=404, detail="Stem directory not found.")
+
+    stems_list = task_info.get("stems", ["vocals", "drums", "bass", "other"])
+    format_type = "wav" if format.lower() == "wav" else "mp3"
+
+    task_dir = DATA_DIR / task_id
+    exports_dir = task_dir / "exports"
+    exports_dir.mkdir(parents=True, exist_ok=True)
+    zip_export_path = exports_dir / f"stems_{format_type}_{quality}.zip"
+
+    if not zip_export_path.exists() or zip_export_path.stat().st_size == 0:
+        with zipfile.ZipFile(zip_export_path, "w", zipfile.ZIP_DEFLATED) as zipf:
+            for s_name in stems_list:
+                src_stem = Path(stems_dir_str) / f"{s_name}.mp3"
+                if src_stem.exists():
+                    stem_dest = exports_dir / f"{s_name}_{quality}.{format_type}"
+                    export_audio_file(src_stem, stem_dest, format_type, quality)
+                    zipf.write(stem_dest, arcname=f"{s_name}.{format_type}")
+
+    song_title = task_info.get("original_name", "Track")
+    if song_title.lower().endswith(".mp3") or song_title.lower().endswith(".wav"):
+        song_title = Path(song_title).stem
+
+    if not filename:
+        filename = f"{song_title}_stems.zip"
+
+    clean_name = re.sub(r'[^\w\s\-\.]', '', filename).strip() or "stems.zip"
+    if not clean_name.lower().endswith(".zip"):
+        clean_name += ".zip"
+
+    return FileResponse(
+        path=zip_export_path,
+        media_type="application/zip",
+        filename=clean_name
     )
