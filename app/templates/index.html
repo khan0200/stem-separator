@@ -2756,6 +2756,9 @@
                 <span style="font-family: 'JetBrains Mono', monospace; font-size: 14px; font-weight: 700; color: var(--accent-blue);">
                     {{ progressPercent }}%
                 </span>
+                <button class="btn-studio-start" style="max-width: 220px; margin-top: 20px;" @click="cancelSeparation">
+                    Cancel Separation
+                </button>
             </div>
 
             <!-- VIEW C: Studio Mixer Deck (Matches Reference Mockup 1:1) -->
@@ -3325,9 +3328,10 @@
                 };
 
                 // Application View States: 'upload' | 'processing' | 'studio'
-                const viewState = ref('studio'); 
-                const activeTaskId = ref(localStorage.getItem('active_stem_task_id') || 'a0788b3a-ccd7-4423-802b-bc6ae5f9b608');
-                const activeSongTitle = ref(localStorage.getItem('active_stem_title') || "Jaloliddin Ahmadaliyev - Bahor yomg'irlari.mp3");
+                const savedTaskId = localStorage.getItem('active_stem_task_id');
+                const viewState = ref(savedTaskId ? 'studio' : 'upload');
+                const activeTaskId = ref(savedTaskId || null);
+                const activeSongTitle = ref(localStorage.getItem('active_stem_title') || '');
                 const detectedBpm = ref(parseInt(localStorage.getItem('active_stem_bpm')) || 87);
 
                 // Upload & Progress State
@@ -3722,9 +3726,18 @@
                 // TASK RESTORATION & POLLING
                 // ==================================================
                 const loadTask = async (taskId) => {
+                    if (!taskId) {
+                        viewState.value = 'upload';
+                        return;
+                    }
                     try {
                         const res = await fetch(`/api/status/${encodeURIComponent(taskId)}`);
-                        if (!res.ok) return;
+                        if (!res.ok) {
+                            localStorage.removeItem('active_stem_task_id');
+                            activeTaskId.value = null;
+                            viewState.value = 'upload';
+                            return;
+                        }
                         const info = await res.json();
 
                         if (info.original_name) {
@@ -3755,6 +3768,11 @@
                             activeTaskId.value = taskId;
                             localStorage.setItem('active_stem_task_id', taskId);
                             startPolling(taskId);
+                        } else if (info.status === 'error' || info.status === 'cancelled') {
+                            localStorage.removeItem('active_stem_task_id');
+                            activeTaskId.value = null;
+                            errorMessage.value = info.error || 'Separation cancelled.';
+                            viewState.value = 'upload';
                         }
                     } catch (e) {
                         console.error('Task restore error:', e);
@@ -3775,9 +3793,9 @@
                             if (info.status === 'completed') {
                                 clearInterval(pollTimer);
                                 loadTask(taskId);
-                            } else if (info.status === 'error') {
+                            } else if (info.status === 'error' || info.status === 'cancelled') {
                                 clearInterval(pollTimer);
-                                errorMessage.value = info.error || 'Separation failed.';
+                                errorMessage.value = info.error || 'Separation cancelled.';
                                 viewState.value = 'upload';
                             }
                         } catch (e) {
@@ -3839,6 +3857,26 @@
                     stopAllAudio();
                     selectedFile.value = null;
                     viewState.value = 'upload';
+                };
+
+                const cancelSeparation = async () => {
+                    if (!activeTaskId.value) return;
+                    try {
+                        const res = await fetch(`/api/cancel/${encodeURIComponent(activeTaskId.value)}`, {
+                            method: 'POST'
+                        });
+                        const data = await res.json();
+                        if (!res.ok) {
+                            throw new Error(data.detail || 'Cancellation failed.');
+                        }
+                        if (pollTimer) clearInterval(pollTimer);
+                        errorMessage.value = 'Separation cancelled.';
+                        localStorage.removeItem('active_stem_task_id');
+                        activeTaskId.value = null;
+                        viewState.value = 'upload';
+                    } catch (err) {
+                        errorMessage.value = err.message || 'Cancellation failed.';
+                    }
                 };
 
                 // Formatting Helpers
@@ -3931,7 +3969,7 @@
 
                 // Lifecycle
                 onMounted(() => {
-                    loadTask(activeTaskId.value);
+                    if (activeTaskId.value) loadTask(activeTaskId.value);
                     window.addEventListener('resize', renderWaveforms);
                     window.addEventListener('mousemove', onWindowMouseMove);
                     window.addEventListener('mouseup', onWindowMouseUp);
@@ -3996,6 +4034,7 @@
                     handleFileSelect,
                     handleFileDrop,
                     startSeparation,
+                    cancelSeparation,
                     resetToUpload,
                     formatTime,
                     formatFileSize,

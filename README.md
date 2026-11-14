@@ -43,3 +43,30 @@ python run.py
 
 Brauzerda oching:
 - Local: http://localhost:8000 yoki http://127.0.0.1:8000
+
+### Ishlash konfiguratsiyasi
+
+Server bitta GPU worker orqali separation tasklarini navbat bilan bajaradi.
+Navbatdagi maksimal task soni va saqlash muddatini environment variable orqali
+sozlash mumkin:
+
+```bash
+# Default: 2 ta navbatdagi task, 24 soatlik retention
+MAX_QUEUED_JOBS=2
+TASK_RETENTION_HOURS=24
+```
+
+Upload qilingan audio haqiqiy audio stream bo'lishi va 10 soniyadan 10
+daqiqagacha davom etishi kerak. 4-stem rejimida Demucs modeli process ichida
+cache qilinadi; shu sababli keyingi tasklar modelni qayta yuklamaydi. Export
+FFmpeg ishlari alohida thread’da bajariladi va asosiy API loop’ini bloklamaydi.
+Processing ekranidagi `Cancel Separation` tugmasi navbatdagi taskni darhol,
+ishlayotgan taskni esa xavfsiz checkpoint yoki Demucs segmenti tugagach bekor
+qiladi. Bekor qilingan taskning qisman output fayllari tozalanadi.
+
+### Google Colab (T4 GPU)
+
+`stem_separator_colab.ipynb` notebookidan foydalaning. Colab Runtime sozlamasida
+`T4 GPU` tanlangan bo'lishi kerak. Notebook CUDA-enabled PyTorch o'rnatadi va
+`torch.cuda.is_available()` hamda GPU nomini tekshiradi; tekshiruv o'tmasa server
+ishga tushmaydi.

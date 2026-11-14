@@ -4,14 +4,19 @@ import uuid
 import re
 import shutil
 import zipfile
+import json
 import logging
 import subprocess
+import threading
+import time
+from queue import Empty, Full, Queue
 from pathlib import Path
 from typing import Dict, Any, Optional
 from app.separator_engine import DualModeSeparatorEngine
 
-from fastapi import FastAPI, UploadFile, File, Form, HTTPException, BackgroundTasks, Request, Query
+from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Request, Query
 from fastapi.responses import HTMLResponse, JSONResponse, FileResponse
+from starlette.concurrency import run_in_threadpool
 from fastapi.templating import Jinja2Templates
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.base import BaseHTTPMiddleware
@@ -27,6 +32,8 @@ TEMPLATES_DIR = Path(__file__).resolve().parent / "templates"
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 DATA_DIR.mkdir(parents=True, exist_ok=True)
 STATIC_DIR.mkdir(parents=True, exist_ok=True)
+TASK_RETENTION_SECONDS = int(os.environ.get("TASK_RETENTION_HOURS", "24")) * 60 * 60
+MAX_QUEUED_JOBS = max(0, int(os.environ.get("MAX_QUEUED_JOBS", "2")))
 
 # Demucs yo'lini aniqlash
 VENV_SCRIPTS = Path(sys.executable).parent
@@ -36,7 +43,11 @@ if not DEMUCS_EXE.exists():
 
 # Xavfsizlik qoidalari
 MAX_FILE_SIZE = 75 * 1024 * 1024  # 75 MB
+MIN_DURATION_SECONDS = 10
+MAX_DURATION_SECONDS = 10 * 60
 ALLOWED_EXTENSIONS = {".mp3", ".wav", ".m4a", ".ogg", ".flac"}
+ALLOWED_MP3_QUALITIES = {"320k", "256k", "192k"}
+ALLOWED_WAV_QUALITIES = {"wav24", "wav16"}
 ALLOWED_STEM_NAMES = {"vocals", "drums", "bass", "other", "no_vocals", "instrumental"}
 UUID_REGEX = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", re.IGNORECASE)
 
@@ -46,6 +57,17 @@ app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
 # Xotiradagi vazifalar holati
 tasks_db: Dict[str, Dict[str, Any]] = {}
+task_lock = threading.RLock()
+job_queue: Queue = Queue()
+worker_stop = threading.Event()
+worker_thread: Optional[threading.Thread] = None
+separator_engine: Optional[DualModeSeparatorEngine] = None
+export_lock = threading.Lock()
+cancelled_tasks = set()
+
+
+class JobCancelled(Exception):
+    """Raised when a user cancels a queued or running separation."""
 
 
 class SecurityHeadersMiddleware(BaseHTTPMiddleware):
@@ -68,13 +90,213 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
 app.add_middleware(SecurityHeadersMiddleware)
 
 
+def task_meta_path(task_id: str) -> Path:
+    return DATA_DIR / task_id / "meta.json"
+
+
+def persist_task(task_id: str) -> None:
+    """Persist task state so Colab/server restarts can recover it."""
+    with task_lock:
+        task_info = tasks_db.get(task_id)
+        if not task_info:
+            return
+        meta = dict(task_info)
+    try:
+        with open(task_meta_path(task_id), "w", encoding="utf-8") as f:
+            json.dump(meta, f, ensure_ascii=False, indent=2)
+    except OSError:
+        logger.exception("Could not persist task %s", task_id)
+
+
+def update_task(task_id: str, persist: bool = False, **changes: Any) -> None:
+    with task_lock:
+        if task_id not in tasks_db:
+            return
+        tasks_db[task_id].update(changes)
+    if persist:
+        persist_task(task_id)
+
+
+def task_is_cancelled(task_id: str) -> bool:
+    with task_lock:
+        return task_id in cancelled_tasks
+
+
+def mark_cancelled(task_id: str, clear_marker: bool = True) -> None:
+    if clear_marker:
+        with task_lock:
+            cancelled_tasks.discard(task_id)
+    task_dir = DATA_DIR / task_id
+    shutil.rmtree(task_dir / "output", ignore_errors=True)
+    update_task(
+        task_id,
+        persist=True,
+        status="cancelled",
+        progress=0,
+        message="Separation cancelled by user.",
+        error=None
+    )
+
+
+def cleanup_old_tasks() -> None:
+    cutoff = time.time() - TASK_RETENTION_SECONDS
+    for task_dir in DATA_DIR.iterdir():
+        if not task_dir.is_dir() or not UUID_REGEX.match(task_dir.name):
+            continue
+        try:
+            meta_file = task_dir / "meta.json"
+            if not meta_file.exists():
+                continue
+            meta = {}
+            if meta_file.exists():
+                with open(meta_file, "r", encoding="utf-8") as f:
+                    meta = json.load(f)
+            if meta.get("status") not in {"completed", "error"}:
+                continue
+            if task_dir.stat().st_mtime < cutoff:
+                shutil.rmtree(task_dir)
+                logger.info("Removed expired task %s", task_dir.name)
+        except (OSError, ValueError, json.JSONDecodeError):
+            logger.exception("Could not clean task directory %s", task_dir)
+
+
+def recover_tasks() -> None:
+    """Requeue interrupted jobs after a process restart."""
+    for task_dir in DATA_DIR.iterdir():
+        if not task_dir.is_dir() or not UUID_REGEX.match(task_dir.name):
+            continue
+        try:
+            meta_file = task_dir / "meta.json"
+            if not meta_file.exists():
+                logger.warning("Skipping task %s without metadata.", task_dir.name)
+                continue
+            with open(meta_file, "r", encoding="utf-8") as f:
+                meta = json.load(f)
+            if meta.get("status") not in {"pending", "processing"}:
+                continue
+            input_files = list(task_dir.glob("input.*"))
+            if not input_files:
+                continue
+            task_id = task_dir.name
+            tasks_db[task_id] = meta
+            tasks_db[task_id]["status"] = "pending"
+            tasks_db[task_id]["message"] = "Recovered after server restart."
+            output_dir = task_dir / "output"
+            try:
+                enqueue_job(
+                    task_id,
+                    input_files[0],
+                    output_dir,
+                    meta.get("mode", "4stems"),
+                    meta.get("base_stem_name", "track"),
+                    allow_when_full=True
+                )
+                persist_task(task_id)
+            except HTTPException:
+                logger.warning("Recovery queue is full; leaving task %s pending.", task_id)
+        except (OSError, ValueError, json.JSONDecodeError):
+            logger.exception("Could not recover task %s", task_dir.name)
+
+
+def job_worker() -> None:
+    global separator_engine
+    separator_engine = DualModeSeparatorEngine()
+    while not worker_stop.is_set():
+        try:
+            job = job_queue.get(timeout=0.5)
+        except Empty:
+            continue
+        if job is None:
+            job_queue.task_done()
+            break
+        try:
+            if task_is_cancelled(job[0]):
+                mark_cancelled(job[0])
+            else:
+                run_separation_job(*job)
+        finally:
+            job_queue.task_done()
+
+
+def enqueue_job(
+    task_id: str,
+    input_path: Path,
+    output_dir: Path,
+    mode: str,
+    base_stem_name: str,
+    allow_when_full: bool = False
+) -> None:
+    if not allow_when_full and MAX_QUEUED_JOBS and job_queue.qsize() >= MAX_QUEUED_JOBS:
+        raise HTTPException(status_code=429, detail="The separation queue is full. Try again later.")
+    try:
+        job_queue.put_nowait((task_id, input_path, output_dir, mode, base_stem_name))
+    except Full:
+        raise HTTPException(status_code=429, detail="The separation queue is full. Try again later.")
+
+
+@app.on_event("startup")
+def start_worker() -> None:
+    global worker_thread
+    cleanup_old_tasks()
+    worker_stop.clear()
+    worker_thread = threading.Thread(target=job_worker, name="separation-worker", daemon=True)
+    worker_thread.start()
+    recover_tasks()
+
+
+@app.on_event("shutdown")
+def stop_worker() -> None:
+    worker_stop.set()
+    try:
+        job_queue.put_nowait(None)
+    except Full:
+        pass
+    if worker_thread:
+        worker_thread.join(timeout=5)
+
+
 def sanitize_filename(name: str) -> str:
     cleaned = re.sub(r'[^a-zA-Z0-9_\-\.]', '_', Path(name).stem)
     return cleaned[:40] if cleaned else "track"
 
 
-import json
 import numpy as np
+
+
+def validate_audio_file(audio_path: Path) -> float:
+    """Validate the media container and enforce the supported duration range."""
+    ffprobe_exe = Path(sys.executable).parent / "ffprobe.exe"
+    ffprobe_cmd = str(ffprobe_exe) if ffprobe_exe.exists() else "ffprobe"
+    cmd = [
+        ffprobe_cmd,
+        "-v", "error",
+        "-show_entries", "format=duration:stream=codec_type",
+        "-of", "json",
+        str(audio_path)
+    ]
+    try:
+        result = subprocess.run(
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            timeout=20
+        )
+        if result.returncode != 0:
+            raise ValueError("The uploaded file is not a valid audio file.")
+        media = json.loads(result.stdout)
+        if not any(s.get("codec_type") == "audio" for s in media.get("streams", [])):
+            raise ValueError("The uploaded file does not contain an audio stream.")
+        duration = float(media.get("format", {}).get("duration", 0))
+    except (OSError, subprocess.SubprocessError, ValueError, TypeError, json.JSONDecodeError) as exc:
+        raise ValueError("The uploaded file could not be validated as audio.") from exc
+
+    if not MIN_DURATION_SECONDS <= duration <= MAX_DURATION_SECONDS:
+        raise ValueError(
+            f"Audio duration must be between {MIN_DURATION_SECONDS} seconds and "
+            f"{MAX_DURATION_SECONDS // 60} minutes."
+        )
+    return duration
 
 
 def compute_stem_waveforms(stems_dir: Path, output_dir: Path, num_bars: int = 120) -> Dict[str, list]:
@@ -91,34 +313,60 @@ def compute_stem_waveforms(stems_dir: Path, output_dir: Path, num_bars: int = 12
     ffmpeg_exe = Path(sys.executable).parent / "ffmpeg.exe"
     ffmpeg_cmd = str(ffmpeg_exe) if ffmpeg_exe.exists() else "ffmpeg"
 
-    for stem_path in stems_dir.glob("*.mp3"):
-        stem_name = stem_path.stem.lower()
-        try:
-            cmd = [
-                ffmpeg_cmd,
-                "-i", str(stem_path),
-                "-ac", "1",
-                "-ar", "1000",
-                "-f", "f32le",
-                "-"
+    stem_paths = sorted(stems_dir.glob("*.mp3"))
+    if not stem_paths:
+        return waveforms
+
+    temp_paths = [
+        output_dir / f".waveform_{index}.f32"
+        for index in range(len(stem_paths))
+    ]
+    cmd = [ffmpeg_cmd, "-v", "error", "-y"]
+    for stem_path in stem_paths:
+        cmd.extend(["-i", str(stem_path)])
+    for index, temp_path in enumerate(temp_paths):
+        cmd.extend([
+            "-map", f"{index}:a:0",
+            "-ac", "1",
+            "-ar", "1000",
+            "-f", "f32le",
+            str(temp_path)
+        ])
+
+    try:
+        proc = subprocess.run(
+            cmd,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.PIPE,
+            text=True,
+            timeout=MAX_DURATION_SECONDS
+        )
+        if proc.returncode != 0:
+            raise RuntimeError(proc.stderr[-500:])
+
+        for stem_path, temp_path in zip(stem_paths, temp_paths):
+            samples = np.fromfile(temp_path, dtype=np.float32)
+            if not len(samples):
+                continue
+            bins = np.array_split(np.abs(samples), num_bars)
+            peaks = []
+            for bucket in bins:
+                rms = float(np.sqrt(np.mean(bucket ** 2))) if len(bucket) else 0.0
+                peak = float(np.max(bucket)) if len(bucket) else 0.0
+                peaks.append(0.65 * peak + 0.35 * rms)
+            max_val = max(peaks) if max(peaks) > 0 else 1.0
+            waveforms[stem_path.stem.lower()] = [
+                round(float((peak / max_val) ** 0.8), 3)
+                for peak in peaks
             ]
-            proc = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
-            if proc.returncode == 0 and proc.stdout:
-                samples = np.frombuffer(proc.stdout, dtype=np.float32)
-                bins = np.array_split(np.abs(samples), num_bars)
-                peaks = []
-                for b in bins:
-                    if len(b) > 0:
-                        rms = float(np.sqrt(np.mean(b**2)))
-                        pk = float(np.max(b))
-                        peaks.append(0.65 * pk + 0.35 * rms)
-                    else:
-                        peaks.append(0.0)
-                max_val = max(peaks) if max(peaks) > 0 else 1.0
-                norm = [round(float((p / max_val) ** 0.8), 3) for p in peaks]
-                waveforms[stem_name] = norm
-        except Exception as e:
-            logger.warning(f"Failed to extract waveform for {stem_name}: {e}")
+    except (OSError, subprocess.SubprocessError, RuntimeError) as exc:
+        logger.warning("Failed to extract waveforms: %s", exc)
+    finally:
+        for temp_path in temp_paths:
+            try:
+                temp_path.unlink(missing_ok=True)
+            except OSError:
+                logger.warning("Could not remove waveform temporary file %s", temp_path)
 
     if waveforms:
         try:
@@ -233,54 +481,32 @@ def get_or_restore_task(task_id: str) -> Optional[Dict[str, Any]]:
 
     zips = list(output_dir.glob("*.zip"))
 
-    if stem_files:
-        stems_list = [sf.stem.lower() for sf in stem_files]
-        zip_path = zips[0] if zips else None
-        if not zip_path:
-            zip_path = output_dir / "audio_stems.zip"
-            with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zipf:
-                for sf in stem_files:
-                    zipf.write(sf, arcname=sf.name)
-
-        waveforms = compute_stem_waveforms(actual_stem_dir, output_dir)
-
-        bpm = meta_data.get("bpm")
-        if not bpm:
-            drums_file = actual_stem_dir / "drums.mp3"
-            target_audio = drums_file if drums_file.exists() else (task_dir / "input.mp3")
-            bpm = estimate_bpm(target_audio)
-            meta_data["bpm"] = bpm
-
-        original_name = meta_data.get("original_name")
-        if not original_name:
-            input_files = list(task_dir.glob("input.*"))
-            original_name = input_files[0].name if input_files else "Music Track.mp3"
-            meta_data["original_name"] = original_name
-
-        try:
-            with open(meta_file, "w", encoding="utf-8") as f:
-                json.dump(meta_data, f, ensure_ascii=False, indent=2)
-        except Exception:
-            pass
-
+    if meta_data.get("status") == "completed" or stem_files:
+        stems_dir = Path(meta_data.get("stems_dir", "")) if meta_data.get("stems_dir") else actual_stem_dir
+        if not stems_dir or not stems_dir.exists():
+            stems_dir = actual_stem_dir
+        stems_list = meta_data.get("stems") or [sf.stem.lower() for sf in stem_files]
+        zip_path_value = meta_data.get("zip_path")
+        zip_path = Path(zip_path_value) if zip_path_value else (zips[0] if zips else None)
         tasks_db[task_id] = {
             "status": "completed",
             "progress": 100,
             "message": "Separation completed successfully!",
             "stems": stems_list,
-            "waveforms": waveforms,
-            "zip_filename": zip_path.name,
-            "stems_dir": str(actual_stem_dir),
-            "zip_path": str(zip_path),
+            "waveforms": meta_data.get("waveforms", {}),
+            "zip_filename": meta_data.get("zip_filename", zip_path.name if zip_path else ""),
+            "stems_dir": str(stems_dir) if stems_dir else "",
+            "zip_path": str(zip_path) if zip_path else "",
             "original_name": meta_data.get("original_name", "Music Track.mp3"),
-            "bpm": meta_data.get("bpm", 87)
+            "bpm": meta_data.get("bpm")
         }
+        persist_task(task_id)
         return tasks_db[task_id]
 
     input_files = list(task_dir.glob("input.*"))
     if input_files:
         tasks_db[task_id] = {
-            "status": "processing",
+            "status": meta_data.get("status", "pending"),
             "progress": 50,
             "message": "Analyzing audio...",
             "stems": [],
@@ -302,16 +528,26 @@ def run_separation_job(task_id: str, input_path: Path, output_dir: Path, mode: s
         Zero vocal leakage into instruments.
     """
     try:
-        tasks_db[task_id]["status"] = "processing"
-        tasks_db[task_id]["progress"] = 5
-        tasks_db[task_id]["message"] = "Initializing AI model engine..."
+        if task_is_cancelled(task_id):
+            raise JobCancelled()
+
+        update_task(
+            task_id,
+            persist=True,
+            status="processing",
+            progress=5,
+            message="Initializing AI model engine..."
+        )
 
         def update_progress(pct: int, msg: str):
-            tasks_db[task_id]["progress"] = pct
-            tasks_db[task_id]["message"] = msg
+            if task_is_cancelled(task_id):
+                raise JobCancelled()
+            update_task(task_id, progress=pct, message=msg)
             logger.info(f"Task {task_id} [{pct}%]: {msg}")
 
-        engine = DualModeSeparatorEngine()
+        if separator_engine is None:
+            raise RuntimeError("Separation worker is not initialized.")
+        engine = separator_engine
         stems_dir = output_dir / "stems"
         stems_dir.mkdir(parents=True, exist_ok=True)
 
@@ -324,11 +560,15 @@ def run_separation_job(task_id: str, input_path: Path, output_dir: Path, mode: s
 
         update_progress(94, "Computing audio waveforms & peak data...")
         waveforms = compute_stem_waveforms(stems_dir, output_dir)
+        if task_is_cancelled(task_id):
+            raise JobCancelled()
 
         # Estimate BPM from drums or input
         drums_file = stems_dir / "drums.mp3"
         bpm_source = drums_file if drums_file.exists() else input_path
         bpm = estimate_bpm(bpm_source)
+        if task_is_cancelled(task_id):
+            raise JobCancelled()
 
         update_progress(97, "Packaging output stems archive (ZIP)...")
         zip_filename = f"{base_stem_name}_stems.zip"
@@ -357,21 +597,53 @@ def run_separation_job(task_id: str, input_path: Path, output_dir: Path, mode: s
         except Exception:
             pass
 
-        tasks_db[task_id]["status"] = "completed"
-        tasks_db[task_id]["progress"] = 100
-        tasks_db[task_id]["message"] = "Separation completed successfully!"
-        tasks_db[task_id]["stems"] = stems_list
-        tasks_db[task_id]["waveforms"] = waveforms
-        tasks_db[task_id]["bpm"] = bpm
-        tasks_db[task_id]["zip_filename"] = zip_filename
-        tasks_db[task_id]["stems_dir"] = str(stems_dir)
-        tasks_db[task_id]["zip_path"] = str(zip_path)
+        update_task(
+            task_id,
+            persist=True,
+            status="completed",
+            progress=100,
+            message="Separation completed successfully!",
+            stems=stems_list,
+            waveforms=waveforms,
+            bpm=bpm,
+            zip_filename=zip_filename,
+            stems_dir=str(stems_dir),
+            zip_path=str(zip_path)
+        )
         logger.info(f"Task {task_id} completed successfully with mode {mode}. Stems: {stems_list}")
 
+    except JobCancelled:
+        logger.info("Task %s cancelled.", task_id)
+        mark_cancelled(task_id)
     except Exception as exc:
         logger.exception(f"Unexpected error in Task {task_id}: {exc}")
-        tasks_db[task_id]["status"] = "error"
-        tasks_db[task_id]["error"] = str(exc)
+        update_task(
+            task_id,
+            persist=True,
+            status="error",
+            progress=0,
+            message="Separation failed.",
+            error=str(exc)
+        )
+
+
+@app.post("/api/cancel/{task_id}")
+async def cancel_separation(task_id: str):
+    task_info = get_or_restore_task(task_id)
+    if not task_info:
+        raise HTTPException(status_code=404, detail="Task not found.")
+    if task_info.get("status") in {"completed", "error", "cancelled"}:
+        raise HTTPException(status_code=409, detail="Task is no longer cancellable.")
+
+    with task_lock:
+        cancelled_tasks.add(task_id)
+    if task_info.get("status") == "pending":
+        mark_cancelled(task_id, clear_marker=False)
+    return JSONResponse({
+        "task_id": task_id,
+        "status": "cancelled",
+        "message": "Cancellation requested."
+    })
 
 
 @app.get("/", response_class=FileResponse)
@@ -381,7 +653,6 @@ async def index_page():
 
 @app.post("/api/separate")
 async def start_separation(
-    background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
     mode: str = Form("4stems")
 ):
@@ -418,6 +689,13 @@ async def start_separation(
                     detail="Audio file exceeds the maximum allowed size of 75 MB."
                 )
             f_out.write(chunk)
+    await file.close()
+
+    try:
+        duration = validate_audio_file(input_path)
+    except ValueError as exc:
+        shutil.rmtree(task_dir, ignore_errors=True)
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     safe_base_name = sanitize_filename(original_name)
 
@@ -428,21 +706,31 @@ async def start_separation(
                 "task_id": task_id,
                 "original_name": original_name,
                 "base_stem_name": safe_base_name,
-                "mode": mode
+                "mode": mode,
+                "duration": duration
             }, f, ensure_ascii=False, indent=2)
     except Exception:
         pass
 
     tasks_db[task_id] = {
         "status": "pending",
+        "progress": 0,
+        "message": "File uploaded and separation queued.",
         "original_name": original_name,
         "base_stem_name": safe_base_name,
         "mode": mode,
+        "duration": duration,
         "stems": [],
         "bpm": None
     }
+    persist_task(task_id)
 
-    background_tasks.add_task(run_separation_job, task_id, input_path, output_dir, mode, safe_base_name)
+    try:
+        enqueue_job(task_id, input_path, output_dir, mode, safe_base_name)
+    except HTTPException:
+        shutil.rmtree(task_dir, ignore_errors=True)
+        tasks_db.pop(task_id, None)
+        raise
 
     return JSONResponse({
         "success": True,
@@ -480,10 +768,15 @@ async def get_waveforms(task_id: str):
 
     waveforms = task_info.get("waveforms")
     if not waveforms:
-        output_dir = Path(task_info.get("zip_path")).parent
-        stems_dir = Path(task_info.get("stems_dir"))
-        waveforms = compute_stem_waveforms(stems_dir, output_dir)
+        zip_path = task_info.get("zip_path")
+        stems_dir_value = task_info.get("stems_dir")
+        if not zip_path or not stems_dir_value:
+            raise HTTPException(status_code=404, detail="Waveform source files not found.")
+        output_dir = Path(zip_path).parent
+        stems_dir = Path(stems_dir_value)
+        waveforms = await run_in_threadpool(compute_stem_waveforms, stems_dir, output_dir)
         task_info["waveforms"] = waveforms
+        persist_task(task_id)
 
     return JSONResponse(waveforms)
 
@@ -569,6 +862,42 @@ def export_audio_file(src_path: Path, dest_path: Path, format_type: str, quality
     return dest_path
 
 
+def export_cached_stem(
+    src_stem: Path,
+    cached_dest: Path,
+    format_type: str,
+    quality: str
+) -> Path:
+    with export_lock:
+        return export_audio_file(src_stem, cached_dest, format_type, quality)
+
+
+def export_cached_archive(
+    stems_dir: Path,
+    stems_list: list,
+    exports_dir: Path,
+    zip_export_path: Path,
+    format_type: str,
+    quality: str
+) -> Path:
+    with export_lock:
+        if not zip_export_path.exists() or zip_export_path.stat().st_size == 0:
+            temp_zip_path = zip_export_path.with_suffix(".tmp.zip")
+            try:
+                with zipfile.ZipFile(temp_zip_path, "w", zipfile.ZIP_DEFLATED) as zipf:
+                    for s_name in stems_list:
+                        src_stem = stems_dir / f"{s_name}.mp3"
+                        if src_stem.exists():
+                            stem_dest = exports_dir / f"{s_name}_{quality}.{format_type}"
+                            export_audio_file(src_stem, stem_dest, format_type, quality)
+                            zipf.write(stem_dest, arcname=f"{s_name}.{format_type}")
+                temp_zip_path.replace(zip_export_path)
+            finally:
+                if temp_zip_path.exists():
+                    temp_zip_path.unlink()
+    return zip_export_path
+
+
 @app.get("/api/export/{task_id}/{stem_name}")
 async def export_single_stem(
     task_id: str,
@@ -594,12 +923,21 @@ async def export_single_stem(
         raise HTTPException(status_code=404, detail="Requested stem file not found.")
 
     format_type = "wav" if format.lower() == "wav" else "mp3"
+    allowed_qualities = ALLOWED_WAV_QUALITIES if format_type == "wav" else ALLOWED_MP3_QUALITIES
+    if quality not in allowed_qualities:
+        raise HTTPException(status_code=400, detail="Invalid export quality.")
     task_dir = DATA_DIR / task_id
     exports_dir = task_dir / "exports"
     cached_dest = exports_dir / f"{stem_name}_{quality}.{format_type}"
 
     try:
-        export_audio_file(src_stem, cached_dest, format_type, quality)
+        await run_in_threadpool(
+            export_cached_stem,
+            src_stem,
+            cached_dest,
+            format_type,
+            quality
+        )
     except Exception as e:
         logger.error(f"Export error for {task_id} / {stem_name}: {e}")
         raise HTTPException(status_code=500, detail="Failed to process audio export.")
@@ -638,20 +976,24 @@ async def export_all_stems(
 
     stems_list = task_info.get("stems", ["vocals", "drums", "bass", "other"])
     format_type = "wav" if format.lower() == "wav" else "mp3"
+    allowed_qualities = ALLOWED_WAV_QUALITIES if format_type == "wav" else ALLOWED_MP3_QUALITIES
+    if quality not in allowed_qualities:
+        raise HTTPException(status_code=400, detail="Invalid export quality.")
 
     task_dir = DATA_DIR / task_id
     exports_dir = task_dir / "exports"
     exports_dir.mkdir(parents=True, exist_ok=True)
     zip_export_path = exports_dir / f"stems_{format_type}_{quality}.zip"
 
-    if not zip_export_path.exists() or zip_export_path.stat().st_size == 0:
-        with zipfile.ZipFile(zip_export_path, "w", zipfile.ZIP_DEFLATED) as zipf:
-            for s_name in stems_list:
-                src_stem = Path(stems_dir_str) / f"{s_name}.mp3"
-                if src_stem.exists():
-                    stem_dest = exports_dir / f"{s_name}_{quality}.{format_type}"
-                    export_audio_file(src_stem, stem_dest, format_type, quality)
-                    zipf.write(stem_dest, arcname=f"{s_name}.{format_type}")
+    await run_in_threadpool(
+        export_cached_archive,
+        Path(stems_dir_str),
+        stems_list,
+        exports_dir,
+        zip_export_path,
+        format_type,
+        quality
+    )
 
     song_title = task_info.get("original_name", "Track")
     if song_title.lower().endswith(".mp3") or song_title.lower().endswith(".wav"):

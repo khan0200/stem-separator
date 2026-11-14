@@ -1,11 +1,8 @@
-import os
 import sys
-import re
 import shutil
 import logging
-import subprocess
 from pathlib import Path
-from typing import Dict, Any, List, Callable, Optional
+from typing import Dict, Any, Callable, Optional
 
 logger = logging.getLogger("separator_engine")
 
@@ -14,10 +11,6 @@ MODELS_DIR = BASE_DIR / "data" / "models"
 MODELS_DIR.mkdir(parents=True, exist_ok=True)
 
 VENV_SCRIPTS = Path(sys.executable).parent
-DEMUCS_EXE = VENV_SCRIPTS / "demucs.exe"
-if not DEMUCS_EXE.exists():
-    DEMUCS_EXE = "demucs"
-
 FFMPEG_EXE = VENV_SCRIPTS / "ffmpeg.exe"
 if not FFMPEG_EXE.exists():
     FFMPEG_EXE = "ffmpeg"
@@ -37,6 +30,8 @@ class DualModeSeparatorEngine:
     def __init__(self, models_dir: Path = MODELS_DIR):
         self.models_dir = models_dir
         self.roformer_model = "model_bs_roformer_ep_317_sdr_12.9755.ckpt"
+        self._roformer_separator = None
+        self._demucs_separator = None
 
     def _run_roformer(
         self,
@@ -49,24 +44,39 @@ class DualModeSeparatorEngine:
         Returns paths to: {"vocals": Path, "instrumental": Path}
         """
         from audio_separator.separator import Separator
+        import torch
+
+        use_cuda = torch.cuda.is_available()
+        logger.info(
+            "BS-RoFormer device: %s%s",
+            "cuda" if use_cuda else "cpu",
+            f" ({torch.cuda.get_device_name(0)})" if use_cuda else "",
+        )
 
         if progress_cb:
             progress_cb(10, "Initializing AI separation engine...")
 
         work_dir.mkdir(parents=True, exist_ok=True)
 
-        separator = Separator(
-            log_level=logging.INFO,
-            model_file_dir=str(self.models_dir),
-            output_dir=str(work_dir),
-            output_format="MP3",
-            output_bitrate="256k",
-            sample_rate=44100
-        )
+        if self._roformer_separator is None:
+            self._roformer_separator = Separator(
+                log_level=logging.INFO,
+                model_file_dir=str(self.models_dir),
+                output_dir=str(work_dir),
+                output_format="MP3",
+                output_bitrate="256k",
+                sample_rate=44100,
+                use_autocast=use_cuda
+            )
+            self._roformer_separator.load_model(self.roformer_model)
+        else:
+            self._roformer_separator.output_dir = str(work_dir)
+            if self._roformer_separator.model_instance is not None:
+                self._roformer_separator.model_instance.output_dir = str(work_dir)
+        separator = self._roformer_separator
 
         if progress_cb:
-            progress_cb(18, "Loading AI neural models...")
-        separator.load_model(self.roformer_model)
+            progress_cb(18, "Loading AI neural models (cached)...")
 
         if progress_cb:
             progress_cb(25, "Separating vocals and instrumental tracks...")
@@ -126,81 +136,50 @@ class DualModeSeparatorEngine:
         if progress_cb:
             progress_cb(55, "Decomposing instrumental tracks...")
 
-        demucs_out_dir = work_dir / "demucs_temp"
-        demucs_out_dir.mkdir(parents=True, exist_ok=True)
-
         import torch
+        from demucs.api import Separator
+        from demucs.audio import save_audio
+
         device = "cuda" if torch.cuda.is_available() else "cpu"
-        threads = "4" if device == "cuda" else "2"
+        jobs = 4 if device == "cuda" else 2
+        if self._demucs_separator is None:
+            self._demucs_separator = Separator(
+                model="htdemucs",
+                device=device,
+                jobs=jobs,
+                progress=False
+            )
+        demucs = self._demucs_separator
 
-        cmd = [
-            str(DEMUCS_EXE),
-            "-n", "htdemucs",
-            "-d", device,
-            "-j", threads,
-            "--mp3",
-            "--mp3-bitrate", "256",
-            "-o", str(demucs_out_dir),
-            str(instrumental_audio)
-        ]
+        def demucs_progress(info: dict) -> None:
+            if progress_cb:
+                if info.get("state") == "end":
+                    progress_cb(90, "Demucs separation progress complete...")
+                else:
+                    progress_cb(60, "Separating drums, bass and instruments...")
 
-        logger.info(f"Running Demucs on instrumental: {' '.join(cmd)}")
+        demucs.update_parameter(callback=demucs_progress)
+        logger.info("Running cached Demucs model on instrumental using %s", device)
         if progress_cb:
             progress_cb(60, "Separating drums, bass and instruments...")
 
-        process = subprocess.Popen(
-            cmd,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-            bufsize=1
-        )
-
-        pattern = re.compile(r'(\d+)%')
-        buffer = ""
-        while True:
-            char = process.stderr.read(1)
-            if not char and process.poll() is not None:
-                break
-            if char:
-                buffer += char
-                if char in ['\r', '\n']:
-                    match = pattern.search(buffer)
-                    if match and progress_cb:
-                        pct = int(match.group(1))
-                        # Scale progress from 60% to 90%
-                        scaled_pct = 60 + int((pct / 100.0) * 30)
-                        progress_cb(scaled_pct, f"Extracting instrumental stems ({pct}%)...")
-                    buffer = ""
-
-        stdout, stderr = process.communicate()
-        if process.returncode != 0:
-            raise RuntimeError(f"Demucs execution failed (code {process.returncode}): {stderr[-300:]}")
-
-        # Locate Demucs output folder
-        stem_folder = demucs_out_dir / "htdemucs" / instrumental_audio.stem
-        if not stem_folder.exists():
-            candidates = list((demucs_out_dir / "htdemucs").glob("*"))
-            if candidates and candidates[0].is_dir():
-                stem_folder = candidates[0]
-            else:
-                raise FileNotFoundError(f"Demucs output folder not found in {demucs_out_dir}")
+        _, separated = demucs.separate_audio_file(instrumental_audio)
+        if progress_cb:
+            progress_cb(90, "Writing instrumental stems...")
 
         stems = {}
         for stem_name in ["drums", "bass", "other"]:
-            src = stem_folder / f"{stem_name}.mp3"
-            if src.exists():
-                dst = work_dir / f"{stem_name}.mp3"
-                shutil.copy2(str(src), str(dst))
-                stems[stem_name] = dst
-            else:
-                raise FileNotFoundError(f"Demucs stem {stem_name}.mp3 missing from {stem_folder}")
-
-        # Clean up temporary demucs folder to save disk space
-        try:
-            shutil.rmtree(str(demucs_out_dir), ignore_errors=True)
-        except Exception:
-            pass
+            if stem_name not in separated:
+                raise RuntimeError(f"Demucs did not return the {stem_name} stem.")
+            dst = work_dir / f"{stem_name}.mp3"
+            save_audio(
+                separated[stem_name],
+                dst,
+                samplerate=demucs.samplerate,
+                bitrate=256,
+                preset=5
+            )
+            stems[stem_name] = dst
 
         return stems
 
