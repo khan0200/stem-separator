@@ -1,0 +1,39 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+.venv/
+ENV/
+build/
+dist/
+*.egg-info/
+
+# Audio Data & Generated Stems
+data/tasks/*
+!data/tasks/.gitkeep
+*.mp3
+*.wav
+*.flac
+*.ogg
+*.m4a
+*.zip
+
+# Cache & Models
+.cache/
+models/
+
+# OS & Editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Environment Variables
+.env
+.env.local
