@@ -25,6 +25,8 @@ data/tasks/*
 # Cache & Models
 .cache/
 models/
+data/models/
+test_out*/
 
 # OS & Editor
 .DS_Store

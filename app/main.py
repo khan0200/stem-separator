@@ -8,6 +8,7 @@ import logging
 import subprocess
 from pathlib import Path
 from typing import Dict, Any, Optional
+from app.separator_engine import DualModeSeparatorEngine
 
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException, BackgroundTasks, Request
 from fastapi.responses import HTMLResponse, JSONResponse, FileResponse
@@ -36,7 +37,7 @@ if not DEMUCS_EXE.exists():
 # Xavfsizlik qoidalari
 MAX_FILE_SIZE = 75 * 1024 * 1024  # 75 MB
 ALLOWED_EXTENSIONS = {".mp3", ".wav", ".m4a", ".ogg", ".flac"}
-ALLOWED_STEM_NAMES = {"vocals", "drums", "bass", "other", "no_vocals"}
+ALLOWED_STEM_NAMES = {"vocals", "drums", "bass", "other", "no_vocals", "instrumental"}
 UUID_REGEX = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", re.IGNORECASE)
 
 app = FastAPI(title="Demucs Audio Stem Separator", version="1.0.0")
@@ -208,17 +209,27 @@ def get_or_restore_task(task_id: str) -> Optional[Dict[str, Any]]:
             pass
 
     output_dir = task_dir / "output"
-    stem_dirs = list((output_dir / "htdemucs").glob("*")) if (output_dir / "htdemucs").exists() else []
     stem_files = []
     actual_stem_dir = None
-    if stem_dirs:
-        for sd in stem_dirs:
-            if sd.is_dir():
-                found = list(sd.glob("*.mp3"))
-                if found:
-                    stem_files = found
-                    actual_stem_dir = sd
-                    break
+
+    # Check dedicated stems directory first
+    if (output_dir / "stems").exists():
+        found = list((output_dir / "stems").glob("*.mp3"))
+        if found:
+            stem_files = found
+            actual_stem_dir = output_dir / "stems"
+
+    # Fallback to legacy htdemucs directory
+    if not stem_files:
+        stem_dirs = list((output_dir / "htdemucs").glob("*")) if (output_dir / "htdemucs").exists() else []
+        if stem_dirs:
+            for sd in stem_dirs:
+                if sd.is_dir():
+                    found = list(sd.glob("*.mp3"))
+                    if found:
+                        stem_files = found
+                        actual_stem_dir = sd
+                        break
 
     zips = list(output_dir.glob("*.zip"))
 
@@ -281,99 +292,51 @@ def get_or_restore_task(task_id: str) -> Optional[Dict[str, Any]]:
     return None
 
 
-def run_demucs_job(task_id: str, input_path: Path, output_dir: Path, mode: str, base_stem_name: str):
-    """Run Demucs separation job in background"""
+def run_separation_job(task_id: str, input_path: Path, output_dir: Path, mode: str, base_stem_name: str):
+    """
+    Dual-Mode AI Stem Separation Background Task:
+    - Mode '2stems': BS-RoFormer AI separates into clean Vocals & Instrumental.
+    - Mode '4stems': Two-stage AI pipeline:
+        Stage 1: BS-RoFormer isolates clean Vocals & Instrumental.
+        Stage 2: Demucs operates ONLY on the isolated Instrumental -> Drums, Bass, Other.
+        Zero vocal leakage into instruments.
+    """
     try:
         tasks_db[task_id]["status"] = "processing"
         tasks_db[task_id]["progress"] = 5
-        tasks_db[task_id]["message"] = "Initializing Demucs model..."
+        tasks_db[task_id]["message"] = "Initializing AI model engine..."
 
-        # Demucs CLI arguments (-j 2 for balanced memory & multi-threading)
-        cmd = [
-            str(DEMUCS_EXE),
-            "-n", "htdemucs",
-            "-d", "cpu",
-            "-j", "2",
-            "--mp3",
-            "--mp3-bitrate", "256",
-            "-o", str(output_dir)
-        ]
+        def update_progress(pct: int, msg: str):
+            tasks_db[task_id]["progress"] = pct
+            tasks_db[task_id]["message"] = msg
+            logger.info(f"Task {task_id} [{pct}%]: {msg}")
+
+        engine = DualModeSeparatorEngine()
+        stems_dir = output_dir / "stems"
+        stems_dir.mkdir(parents=True, exist_ok=True)
 
         if mode == "2stems":
-            cmd.extend(["--two-stems", "vocals"])
+            stems_dict = engine.separate_2stems(input_path, stems_dir, progress_cb=update_progress)
+            stems_list = ["vocals", "instrumental"]
+        else:
+            stems_dict = engine.separate_4stems(input_path, stems_dir, progress_cb=update_progress)
+            stems_list = ["vocals", "drums", "bass", "other"]
 
-        cmd.append(str(input_path))
-
-        logger.info(f"Task {task_id}: Starting Demucs command: {' '.join(cmd)}")
-        process = subprocess.Popen(
-            cmd,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-            bufsize=1
-        )
-
-        pattern = re.compile(r'(\d+)%')
-        buffer = ""
-        while True:
-            chunk = process.stderr.read(64)
-            if not chunk:
-                break
-            buffer += chunk
-            matches = pattern.findall(buffer)
-            if matches:
-                pct = int(matches[-1])
-                mapped_pct = int(5 + (pct * 0.9))
-                tasks_db[task_id]["progress"] = mapped_pct
-                tasks_db[task_id]["message"] = f"Separating audio stems: {mapped_pct}%"
-            if len(buffer) > 500:
-                buffer = buffer[-200:]
-
-        process.wait()
-
-        if process.returncode != 0:
-            logger.error(f"Task {task_id} failed with exit code {process.returncode}")
-            tasks_db[task_id]["status"] = "error"
-            tasks_db[task_id]["error"] = "An error occurred during stem separation."
-            return
-
-        tasks_db[task_id]["progress"] = 96
-        tasks_db[task_id]["message"] = "Packaging output stems..."
-
-        htdemucs_dir = output_dir / "htdemucs" / input_path.stem
-        if not htdemucs_dir.exists():
-            subfolders = list((output_dir / "htdemucs").glob("*"))
-            if subfolders and subfolders[0].is_dir():
-                htdemucs_dir = subfolders[0]
-            else:
-                tasks_db[task_id]["status"] = "error"
-                tasks_db[task_id]["error"] = "Output stems folder not found."
-                return
-
-        stem_files = list(htdemucs_dir.glob("*.mp3"))
-        if not stem_files:
-            tasks_db[task_id]["status"] = "error"
-            tasks_db[task_id]["error"] = "No stem audio files were generated."
-            return
-
-        stems_list = []
-        for sf in stem_files:
-            stem_name = sf.stem.lower()
-            stems_list.append(stem_name)
-
-        # Create zip bundle
-        zip_path = output_dir / f"{base_stem_name}_stems.zip"
-        with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zipf:
-            for sf in stem_files:
-                zipf.write(sf, arcname=sf.name)
-
-        # Compute real audio waveforms
-        waveforms = compute_stem_waveforms(htdemucs_dir, output_dir)
+        update_progress(94, "Computing audio waveforms & peak data...")
+        waveforms = compute_stem_waveforms(stems_dir, output_dir)
 
         # Estimate BPM from drums or input
-        drums_file = htdemucs_dir / "drums.mp3"
+        drums_file = stems_dir / "drums.mp3"
         bpm_source = drums_file if drums_file.exists() else input_path
         bpm = estimate_bpm(bpm_source)
+
+        update_progress(97, "Packaging output stems archive (ZIP)...")
+        zip_filename = f"{base_stem_name}_stems.zip"
+        zip_path = output_dir / zip_filename
+        with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zipf:
+            for s_name, s_path in stems_dict.items():
+                if s_path.exists():
+                    zipf.write(s_path, arcname=s_path.name)
 
         # Persist to meta.json
         meta_file = output_dir.parent / "meta.json"
@@ -385,6 +348,8 @@ def run_demucs_job(task_id: str, input_path: Path, output_dir: Path, mode: str, 
             except Exception:
                 pass
         meta_data["bpm"] = bpm
+        meta_data["mode"] = mode
+        meta_data["stems"] = stems_list
         meta_data["original_name"] = tasks_db[task_id].get("original_name", base_stem_name)
         try:
             with open(meta_file, "w", encoding="utf-8") as f:
@@ -398,15 +363,15 @@ def run_demucs_job(task_id: str, input_path: Path, output_dir: Path, mode: str, 
         tasks_db[task_id]["stems"] = stems_list
         tasks_db[task_id]["waveforms"] = waveforms
         tasks_db[task_id]["bpm"] = bpm
-        tasks_db[task_id]["zip_filename"] = f"{base_stem_name}_stems.zip"
-        tasks_db[task_id]["stems_dir"] = str(htdemucs_dir)
+        tasks_db[task_id]["zip_filename"] = zip_filename
+        tasks_db[task_id]["stems_dir"] = str(stems_dir)
         tasks_db[task_id]["zip_path"] = str(zip_path)
-        logger.info(f"Task {task_id} completed successfully. Stems: {stems_list}")
+        logger.info(f"Task {task_id} completed successfully with mode {mode}. Stems: {stems_list}")
 
     except Exception as exc:
-        logger.exception(f"Unexpected error in Task {task_id}:")
+        logger.exception(f"Unexpected error in Task {task_id}: {exc}")
         tasks_db[task_id]["status"] = "error"
-        tasks_db[task_id]["error"] = "An unexpected error occurred during processing."
+        tasks_db[task_id]["error"] = str(exc)
 
 
 @app.get("/", response_class=FileResponse)
@@ -477,7 +442,7 @@ async def start_separation(
         "bpm": None
     }
 
-    background_tasks.add_task(run_demucs_job, task_id, input_path, output_dir, mode, safe_base_name)
+    background_tasks.add_task(run_separation_job, task_id, input_path, output_dir, mode, safe_base_name)
 
     return JSONResponse({
         "success": True,

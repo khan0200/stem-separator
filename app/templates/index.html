@@ -13,7 +13,9 @@
     <script>window.Vue || document.write('<script src="https://unpkg.com/vue@3/dist/vue.global.prod.js"><\/script>')</script>
     <style>
         :root {
+            --sidebar-w: 260px;
             --bg-base: #0a0b12;
+            --bg-sidebar: #0d0f18;
             --bg-card: rgba(16, 19, 31, 0.88);
             --bg-card-strip: rgba(21, 25, 41, 0.7);
             --border-card: rgba(255, 255, 255, 0.08);
@@ -41,13 +43,226 @@
             background-color: var(--bg-base);
             color: var(--text-primary);
             min-height: 100vh;
+            margin: 0;
+            padding: 0;
+            overflow-x: hidden;
+        }
+
+        #app.app-shell {
+            display: flex;
+            width: 100%;
+            min-height: 100vh;
+            position: relative;
+            background-color: var(--bg-base);
+        }
+
+        /* Full-Height, Fixed Left Sidebar (ChatGPT / Claude style) */
+        .studio-sidebar {
+            width: var(--sidebar-w);
+            height: 100vh;
+            position: fixed;
+            top: 0;
+            left: 0;
+            bottom: 0;
+            z-index: 1200;
+            background: var(--bg-sidebar);
+            border-right: 1px solid rgba(255, 255, 255, 0.08);
+            border-radius: 0;
+            margin: 0;
+            box-shadow: none;
             display: flex;
             flex-direction: column;
-            align-items: center;
-            justify-content: flex-start;
-            padding: 30px 20px 120px;
+            padding: 16px 12px;
+            box-sizing: border-box;
+            transition: transform 0.28s cubic-bezier(0.16, 1, 0.3, 1);
+            overflow-y: auto;
             overflow-x: hidden;
+        }
+
+        .studio-sidebar::-webkit-scrollbar {
+            width: 4px;
+        }
+        .studio-sidebar::-webkit-scrollbar-thumb {
+            background: rgba(255, 255, 255, 0.1);
+            border-radius: 4px;
+        }
+
+        /* Sidebar Top Bar with Collapse Icon */
+        .sidebar-top {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 2px 4px 14px;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+            margin-bottom: 12px;
+        }
+
+        .sidebar-brand {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .brand-logo-glow {
+            width: 36px;
+            height: 36px;
+            border-radius: 10px;
+            background: linear-gradient(135deg, #0A84FF, #BF5AF2);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: #fff;
+            box-shadow: 0 4px 14px rgba(10, 132, 255, 0.35);
+            flex-shrink: 0;
+        }
+
+        .brand-info {
+            display: flex;
+            flex-direction: column;
+            gap: 2px;
+        }
+
+        .brand-name {
+            font-size: 13px;
+            font-weight: 800;
+            letter-spacing: 0.05em;
+            color: #fff;
+        }
+
+        .brand-badge {
+            font-size: 9.5px;
+            font-weight: 700;
+            letter-spacing: 0.08em;
+            color: var(--accent-blue);
+            background: rgba(10, 132, 255, 0.12);
+            padding: 1px 5px;
+            border-radius: 4px;
+            width: fit-content;
+        }
+
+        /* Sidebar Collapse Toggle Button */
+        .btn-sidebar-collapse {
+            width: 32px;
+            height: 32px;
+            border-radius: 8px;
+            background: transparent;
+            border: 1px solid transparent;
+            color: var(--text-muted);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .btn-sidebar-collapse:hover {
+            background: rgba(255, 255, 255, 0.08);
+            color: #fff;
+            border-color: rgba(255, 255, 255, 0.1);
+        }
+
+        /* Quick "+ New Separation" Action Button */
+        .btn-new-stem {
+            width: 100%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 8px;
+            padding: 10px 14px;
+            border-radius: 12px;
+            background: rgba(255, 255, 255, 0.04);
+            border: 1px dashed rgba(255, 255, 255, 0.15);
+            color: #fff;
+            font-family: inherit;
+            font-size: 13px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.2s;
+            margin-bottom: 14px;
+        }
+
+        .btn-new-stem:hover {
+            background: rgba(10, 132, 255, 0.12);
+            border-color: var(--accent-blue);
+            color: #fff;
+            transform: translateY(-1px);
+        }
+
+        /* Active Track Pill in Sidebar */
+        .sidebar-project-box {
+            margin: 14px 0;
+            padding-top: 12px;
+            border-top: 1px solid rgba(255, 255, 255, 0.05);
+        }
+
+        .active-track-pill {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            padding: 10px 12px;
+            border-radius: 12px;
+            background: rgba(255, 255, 255, 0.03);
+            border: 1px solid rgba(255, 255, 255, 0.06);
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .active-track-pill:hover {
+            background: rgba(255, 255, 255, 0.07);
+            border-color: rgba(255, 255, 255, 0.12);
+        }
+
+        .track-pill-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: var(--accent-blue);
+            box-shadow: 0 0 8px var(--accent-blue);
+            flex-shrink: 0;
+        }
+
+        .track-pill-info {
+            display: flex;
+            flex-direction: column;
+            gap: 2px;
+            overflow: hidden;
+        }
+
+        .track-pill-title {
+            font-size: 12px;
+            font-weight: 600;
+            color: #fff;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        .track-pill-sub {
+            font-size: 10.5px;
+            color: var(--text-muted);
+        }
+
+        /* Main Content Area */
+        .studio-main-content {
+            flex: 1;
+            min-width: 0;
+            margin-left: var(--sidebar-w);
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
             position: relative;
+            background-color: var(--bg-base);
+            transition: margin-left 0.28s cubic-bezier(0.16, 1, 0.3, 1);
+        }
+
+        .main-inner-container {
+            width: 100%;
+            max-width: 1280px;
+            margin: 0 auto;
+            padding: 28px 36px 140px;
+            position: relative;
+            z-index: 1;
+            box-sizing: border-box;
         }
 
         /* Ambient Wave Ribbons behind Header */
@@ -57,11 +272,11 @@
             left: 50%;
             transform: translateX(-50%);
             width: 100%;
-            max-width: 1380px;
+            max-width: 1280px;
             height: 240px;
             pointer-events: none;
             z-index: 0;
-            opacity: 0.75;
+            opacity: 0.65;
             overflow: hidden;
         }
 
@@ -71,40 +286,63 @@
             filter: blur(2px);
         }
 
-        #app.app-layout {
-            width: 100%;
-            max-width: 1440px;
-            z-index: 1;
-            position: relative;
-            display: flex;
-            align-items: flex-start;
-            gap: 24px;
-        }
-
-        /* Studio Sidebar Navigation */
-        .studio-sidebar {
-            width: 250px;
-            flex-shrink: 0;
-            background: var(--bg-card);
-            border: 1px solid var(--border-card);
-            backdrop-filter: blur(24px);
-            -webkit-backdrop-filter: blur(24px);
-            border-radius: 24px;
-            padding: 22px 14px;
-            position: sticky;
-            top: 24px;
-            display: flex;
-            flex-direction: column;
-            gap: 22px;
-            box-shadow: 0 10px 40px rgba(0, 0, 0, 0.45);
-        }
-
-        .sidebar-brand {
+        /* Header Left Cluster with Open Sidebar Button */
+        .header-left-cluster {
             display: flex;
             align-items: center;
-            gap: 12px;
-            padding: 2px 8px 14px;
-            border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+            gap: 14px;
+        }
+
+        .btn-sidebar-open {
+            display: none;
+            width: 36px;
+            height: 36px;
+            border-radius: 10px;
+            background: rgba(255, 255, 255, 0.05);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            color: var(--text-secondary);
+            align-items: center;
+            justify-content: center;
+            cursor: pointer;
+            transition: all 0.2s;
+            flex-shrink: 0;
+        }
+
+        .btn-sidebar-open:hover {
+            background: rgba(255, 255, 255, 0.1);
+            color: #fff;
+        }
+
+        /* Collapsed State (Desktop / Tablet) */
+        #app.app-shell.sidebar-collapsed .studio-sidebar {
+            transform: translateX(-100%);
+        }
+
+        #app.app-shell.sidebar-collapsed .studio-main-content {
+            margin-left: 0;
+        }
+
+        #app.app-shell.sidebar-collapsed .btn-sidebar-open {
+            display: flex;
+        }
+
+        #app.app-shell.sidebar-collapsed .master-dock {
+            left: 50%;
+            width: calc(100% - 48px);
+        }
+
+        /* Mobile Backdrop Overlay */
+        .sidebar-backdrop {
+            display: none;
+            position: fixed;
+            inset: 0;
+            background: rgba(0, 0, 0, 0.65);
+            backdrop-filter: blur(4px);
+            -webkit-backdrop-filter: blur(4px);
+            z-index: 1150;
+            opacity: 0;
+            transition: opacity 0.25s ease;
+            pointer-events: none;
         }
 
         .brand-logo-glow {
@@ -1076,12 +1314,13 @@
             box-shadow: 0 4px 24px rgba(191, 90, 242, 0.1);
         }
 
-        .channel-strip.stem-instruments, .channel-strip.stem-other {
+        .channel-strip.stem-instruments, .channel-strip.stem-other, .channel-strip.stem-instrumental {
             border-color: rgba(48, 209, 88, 0.25);
             box-shadow: 0 4px 18px rgba(48, 209, 88, 0.04);
         }
         .channel-strip.stem-instruments:hover, .channel-strip.stem-instruments.playing,
-        .channel-strip.stem-other:hover, .channel-strip.stem-other.playing {
+        .channel-strip.stem-other:hover, .channel-strip.stem-other.playing,
+        .channel-strip.stem-instrumental:hover, .channel-strip.stem-instrumental.playing {
             border-color: rgba(48, 209, 88, 0.48);
             box-shadow: 0 4px 24px rgba(48, 209, 88, 0.1);
         }
@@ -1251,15 +1490,15 @@
         .master-dock {
             position: fixed;
             bottom: 20px;
-            left: 50%;
+            left: calc(var(--sidebar-w) + (100% - var(--sidebar-w)) / 2);
             transform: translateX(-50%);
-            width: calc(100% - 40px);
-            max-width: 1280px;
+            width: calc(100% - var(--sidebar-w) - 48px);
+            max-width: 1200px;
             z-index: 1000;
             display: flex;
             align-items: center;
             justify-content: space-between;
-            background: rgba(14, 17, 28, 0.92);
+            background: rgba(14, 17, 28, 0.94);
             backdrop-filter: blur(30px);
             -webkit-backdrop-filter: blur(30px);
             border: 1px solid rgba(255, 255, 255, 0.12);
@@ -1268,6 +1507,7 @@
             gap: 16px;
             box-shadow: 0 16px 50px rgba(0, 0, 0, 0.75), 0 0 30px rgba(10, 132, 255, 0.08);
             animation: slideUpDock 0.28s cubic-bezier(0.16, 1, 0.3, 1);
+            transition: left 0.28s cubic-bezier(0.16, 1, 0.3, 1), width 0.28s cubic-bezier(0.16, 1, 0.3, 1);
         }
 
         @keyframes slideUpDock {
@@ -1476,29 +1716,152 @@
             color: var(--text-secondary);
         }
 
-        .stem-mode-selector {
-            display: flex;
-            gap: 12px;
-            margin-bottom: 26px;
+        /* Dual-Mode Stem Selection Cards */
+        .stem-cards-grid {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 16px;
+            margin-bottom: 24px;
+            width: 100%;
+            max-width: 680px;
         }
 
-        .mode-chip {
-            padding: 10px 20px;
-            border-radius: 14px;
-            background: rgba(255, 255, 255, 0.05);
-            border: 1px solid rgba(255, 255, 255, 0.1);
-            color: var(--text-secondary);
-            font-size: 13.5px;
-            font-weight: 600;
+        .stem-mode-card {
+            background: rgba(255, 255, 255, 0.03);
+            border: 1.5px solid rgba(255, 255, 255, 0.08);
+            border-radius: 16px;
+            padding: 18px 20px;
             cursor: pointer;
+            text-align: left;
+            position: relative;
+            transition: all 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+            user-select: none;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .stem-mode-card:hover {
+            background: rgba(255, 255, 255, 0.05);
+            border-color: rgba(255, 255, 255, 0.2);
+            transform: translateY(-2px);
+        }
+
+        .stem-mode-card.active {
+            background: rgba(10, 132, 255, 0.08);
+            border-color: var(--accent-blue);
+            box-shadow: 0 0 24px rgba(10, 132, 255, 0.22);
+        }
+
+        .card-top-row {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin-bottom: 12px;
+        }
+
+        .card-icon-wrap {
+            width: 40px;
+            height: 40px;
+            border-radius: 10px;
+            background: rgba(255, 255, 255, 0.06);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: #fff;
             transition: all 0.2s;
         }
 
-        .mode-chip.active {
-            background: rgba(10, 132, 255, 0.18);
-            border-color: var(--accent-blue);
+        .stem-mode-card.active .card-icon-wrap {
+            background: rgba(10, 132, 255, 0.2);
+            color: var(--accent-blue);
+        }
+
+        .card-badge {
+            font-size: 11px;
+            font-weight: 700;
+            padding: 4px 10px;
+            border-radius: 20px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        .badge-2stems {
+            background: rgba(48, 209, 88, 0.15);
+            color: #30D158;
+            border: 1px solid rgba(48, 209, 88, 0.3);
+        }
+
+        .badge-4stems {
+            background: rgba(10, 132, 255, 0.15);
+            color: #0A84FF;
+            border: 1px solid rgba(10, 132, 255, 0.3);
+        }
+
+        .card-title {
+            font-size: 15.5px;
+            font-weight: 700;
             color: #fff;
-            box-shadow: 0 0 16px rgba(10, 132, 255, 0.25);
+            margin-bottom: 2px;
+        }
+
+        .card-stems-icons {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            flex-wrap: wrap;
+            margin-top: 10px;
+        }
+
+        .stem-icon-pill {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            padding: 6px 12px;
+            border-radius: 10px;
+            font-size: 13px;
+            font-weight: 600;
+            transition: all 0.2s;
+        }
+
+        .stem-icon-pill.pill-vocal {
+            color: #64D2FF;
+            border: 1px solid rgba(10, 132, 255, 0.35);
+            background: rgba(10, 132, 255, 0.12);
+        }
+
+        .stem-icon-pill.pill-instrumental {
+            color: #30D158;
+            border: 1px solid rgba(48, 209, 88, 0.35);
+            background: rgba(48, 209, 88, 0.12);
+        }
+
+        .stem-icon-pill.pill-drums {
+            color: #FF375F;
+            border: 1px solid rgba(255, 55, 95, 0.35);
+            background: rgba(255, 55, 95, 0.12);
+        }
+
+        .stem-icon-pill.pill-bass {
+            color: #BF5AF2;
+            border: 1px solid rgba(191, 90, 242, 0.35);
+            background: rgba(191, 90, 242, 0.12);
+        }
+
+        .stem-icon-pill.pill-other {
+            color: #FF9F0A;
+            border: 1px solid rgba(255, 159, 10, 0.35);
+            background: rgba(255, 159, 10, 0.12);
+        }
+
+        .stem-icon-pill .pill-emoji {
+            font-size: 15px;
+            line-height: 1;
+        }
+
+        @media (max-width: 600px) {
+            .stem-cards-grid {
+                grid-template-columns: 1fr;
+            }
         }
 
         .btn-studio-start {
@@ -1554,33 +1917,38 @@
             color: #ff453a;
         }
 
-        /* Responsive */
-        @media (max-width: 960px) {
-            #app.app-layout {
-                flex-direction: column;
-                gap: 18px;
-            }
+        /* Responsive (Tablet & Mobile Slide-Out Drawer like ChatGPT / Claude) */
+        @media (max-width: 900px) {
             .studio-sidebar {
-                width: 100%;
-                position: relative;
-                top: 0;
-                padding: 12px 14px;
+                transform: translateX(-100%);
+                box-shadow: 12px 0 40px rgba(0, 0, 0, 0.85);
             }
-            .sidebar-brand, .sidebar-section-title, .sidebar-status-card {
-                display: none;
+
+            .studio-main-content {
+                margin-left: 0;
             }
-            .sidebar-nav {
-                flex-direction: row;
-                gap: 8px;
-                width: 100%;
+
+            .btn-sidebar-open {
+                display: flex;
             }
-            .nav-item {
-                flex: 1;
-                justify-content: center;
-                padding: 10px 8px;
+
+            .master-dock {
+                left: 50% !important;
+                width: calc(100% - 32px) !important;
             }
-            .nav-text {
-                flex: initial;
+
+            .main-inner-container {
+                padding: 20px 16px 140px;
+            }
+
+            #app.app-shell.mobile-open .studio-sidebar {
+                transform: translateX(0);
+            }
+
+            #app.app-shell.mobile-open .sidebar-backdrop {
+                display: block;
+                opacity: 1;
+                pointer-events: auto;
             }
         }
 
@@ -1601,50 +1969,54 @@
     </style>
 </head>
 <body>
-    <!-- Flowing Ambient Wave Ribbon -->
-    <div class="ambient-aurora">
-        <svg viewBox="0 0 1200 240" fill="none" xmlns="http://www.w3.org/2000/svg">
-            <path d="M0 80C200 20 400 140 600 60C800 -20 1000 120 1200 70" stroke="url(#paint_aurora)" stroke-width="45" stroke-linecap="round" opacity="0.45"/>
-            <path d="M0 110C240 60 480 160 720 90C960 20 1100 130 1200 100" stroke="url(#paint_aurora_2)" stroke-width="25" stroke-linecap="round" opacity="0.35"/>
-            <defs>
-                <linearGradient id="paint_aurora" x1="0" y1="0" x2="1200" y2="100" gradientUnits="userSpaceOnUse">
-                    <stop offset="0%" stop-color="#0A84FF" />
-                    <stop offset="45%" stop-color="#7928CA" />
-                    <stop offset="75%" stop-color="#BF5AF2" />
-                    <stop offset="100%" stop-color="#FF375F" />
-                </linearGradient>
-                <linearGradient id="paint_aurora_2" x1="0" y1="0" x2="1200" y2="120" gradientUnits="userSpaceOnUse">
-                    <stop offset="0%" stop-color="#30D158" />
-                    <stop offset="50%" stop-color="#0A84FF" />
-                    <stop offset="100%" stop-color="#BF5AF2" />
-                </linearGradient>
-            </defs>
-        </svg>
-    </div>
-
     <!-- Vue 3 Application Mount Point -->
-    <div id="app" class="app-layout">
-        <!-- Left Sidebar Navigation -->
+    <div id="app" class="app-shell" :class="{ 'sidebar-collapsed': isSidebarCollapsed, 'mobile-open': isMobileSidebarOpen }">
+        <!-- Mobile Drawer Backdrop -->
+        <div class="sidebar-backdrop" @click="closeMobileSidebar"></div>
+
+        <!-- FULL-HEIGHT, FIXED LEFT SIDEBAR (ChatGPT / Claude style) -->
         <aside class="studio-sidebar">
-            <div class="sidebar-brand">
-                <div class="brand-logo-glow">
-                    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
-                        <path d="M12 2v20M17 5v14M7 8v8M22 10v4M2 10v4" />
+            <!-- Sidebar Top Bar with Brand & Collapse Button -->
+            <div class="sidebar-top">
+                <div class="sidebar-brand">
+                    <div class="brand-logo-glow">
+                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                            <path d="M12 2v20M17 5v14M7 8v8M22 10v4M2 10v4" />
+                        </svg>
+                    </div>
+                    <div class="brand-info">
+                        <span class="brand-name">AUDIO STUDIO</span>
+                        <span class="brand-badge">DEMUCS AI</span>
+                    </div>
+                </div>
+
+                <!-- Collapse Toggle Icon Button -->
+                <button class="btn-sidebar-collapse" title="Close Sidebar" @click="toggleSidebarCollapse">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect>
+                        <line x1="9" y1="3" x2="9" y2="21"></line>
+                        <path d="M14 9l-3 3 3 3"></path>
                     </svg>
-                </div>
-                <div class="brand-info">
-                    <span class="brand-name">AUDIO STUDIO</span>
-                    <span class="brand-badge">DEMUCS AI</span>
-                </div>
+                </button>
             </div>
 
+            <!-- New Separation Quick Action (ChatGPT "+ New Chat" style) -->
+            <button class="btn-new-stem" @click="handleNewStemClick" title="New Stem Separation">
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                    <line x1="12" y1="5" x2="12" y2="19"></line>
+                    <line x1="5" y1="12" x2="19" y2="12"></line>
+                </svg>
+                <span>New Separation</span>
+            </button>
+
+            <!-- Navigation Links -->
             <div class="sidebar-nav-group">
                 <div class="sidebar-section-title">MENU</div>
                 <nav class="sidebar-nav">
                     <!-- 1) PLAYLIST -->
                     <button class="nav-item" :class="{ active: activeSidebarTab === 'playlist' }" @click="switchTab('playlist')">
                         <div class="nav-icon-wrap">
-                            <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                                 <path d="M9 18V5l12-2v13"></path>
                                 <circle cx="6" cy="18" r="3"></circle>
                                 <circle cx="18" cy="16" r="3"></circle>
@@ -1657,7 +2029,7 @@
                     <!-- 2) STEM -->
                     <button class="nav-item" :class="{ active: activeSidebarTab === 'stem' }" @click="switchTab('stem')">
                         <div class="nav-icon-wrap">
-                            <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                                 <line x1="4" y1="21" x2="4" y2="14"></line>
                                 <line x1="4" y1="10" x2="4" y2="3"></line>
                                 <line x1="12" y1="21" x2="12" y2="12"></line>
@@ -1678,7 +2050,7 @@
                     <!-- 3) EDIT -->
                     <button class="nav-item" :class="{ active: activeSidebarTab === 'edit' }" @click="switchTab('edit')">
                         <div class="nav-icon-wrap">
-                            <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                                 <circle cx="6" cy="6" r="3"></circle>
                                 <circle cx="6" cy="18" r="3"></circle>
                                 <line x1="20" y1="4" x2="8.12" y2="15.88"></line>
@@ -1690,6 +2062,18 @@
                         <span class="nav-badge-pill">BETA</span>
                     </button>
                 </nav>
+            </div>
+
+            <!-- Active Track Project Info in Sidebar -->
+            <div v-if="activeSongTitle" class="sidebar-project-box">
+                <div class="sidebar-section-title">ACTIVE TRACK</div>
+                <div class="active-track-pill" @click="switchTab('stem')" title="View in Studio Deck">
+                    <div class="track-pill-dot"></div>
+                    <div class="track-pill-info">
+                        <span class="track-pill-title" :title="activeSongTitle">{{ activeSongTitle }}</span>
+                        <span class="track-pill-sub">4 Stems • {{ detectedBpm }} BPM</span>
+                    </div>
+                </div>
             </div>
 
             <!-- Bottom System Status Card in Sidebar -->
@@ -1705,35 +2089,68 @@
             </div>
         </aside>
 
-        <!-- Right Main Studio Content Area -->
+        <!-- Right Main Studio Content Area (Full remaining width, scrolls independently) -->
         <div class="studio-main-content">
-            <!-- 1. Header Navigation -->
-            <header class="studio-header">
-                <div class="header-title-box">
-                    <div class="header-breadcrumb">
-                        <span>Audio Studio</span>
-                        <span class="crumb-divider">/</span>
-                        <span class="crumb-active">{{ activeTabLabel }}</span>
-                    </div>
-                    <h1>{{ headerTitle }}</h1>
-                    <p>{{ headerDescription }}</p>
-                </div>
-                <div class="header-user-box">
-                    <button class="btn-notification" title="Notifications" @click="notifyComingSoon('Bildirishnomalar')">
-                        <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                            <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"></path>
-                            <path d="M13.73 21a2 2 0 0 1-3.46 0"></path>
-                        </svg>
-                        <span class="notif-badge"></span>
-                    </button>
-                    <div class="user-pill" title="User Account">
-                        <div class="user-avatar">M</div>
-                        <div class="user-info">
-                            <span class="user-name">Maxim</span>
-                            <span class="user-plan">Pro Plan</span>
+            <!-- Flowing Ambient Wave Ribbon -->
+            <div class="ambient-aurora">
+                <svg viewBox="0 0 1200 240" fill="none" xmlns="http://www.w3.org/2000/svg">
+                    <path d="M0 80C200 20 400 140 600 60C800 -20 1000 120 1200 70" stroke="url(#paint_aurora)" stroke-width="45" stroke-linecap="round" opacity="0.45"/>
+                    <path d="M0 110C240 60 480 160 720 90C960 20 1100 130 1200 100" stroke="url(#paint_aurora_2)" stroke-width="25" stroke-linecap="round" opacity="0.35"/>
+                    <defs>
+                        <linearGradient id="paint_aurora" x1="0" y1="0" x2="1200" y2="100" gradientUnits="userSpaceOnUse">
+                            <stop offset="0%" stop-color="#0A84FF" />
+                            <stop offset="45%" stop-color="#7928CA" />
+                            <stop offset="75%" stop-color="#BF5AF2" />
+                            <stop offset="100%" stop-color="#FF375F" />
+                        </linearGradient>
+                        <linearGradient id="paint_aurora_2" x1="0" y1="0" x2="1200" y2="120" gradientUnits="userSpaceOnUse">
+                            <stop offset="0%" stop-color="#30D158" />
+                            <stop offset="50%" stop-color="#0A84FF" />
+                            <stop offset="100%" stop-color="#BF5AF2" />
+                        </linearGradient>
+                    </defs>
+                </svg>
+            </div>
+
+            <!-- Inner Centered Content Container for Maximum Readability -->
+            <div class="main-inner-container">
+                <!-- 1. Header Navigation -->
+                <header class="studio-header">
+                    <div class="header-left-cluster">
+                        <!-- Open Sidebar Button when collapsed or on mobile -->
+                        <button class="btn-sidebar-open" title="Open Sidebar" @click="toggleSidebarCollapse">
+                            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                <rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect>
+                                <line x1="9" y1="3" x2="9" y2="21"></line>
+                                <path d="M12 9l3 3-3 3"></path>
+                            </svg>
+                        </button>
+                        <div class="header-title-box">
+                            <div class="header-breadcrumb">
+                                <span>Audio Studio</span>
+                                <span class="crumb-divider">/</span>
+                                <span class="crumb-active">{{ activeTabLabel }}</span>
+                            </div>
+                            <h1>{{ headerTitle }}</h1>
+                            <p>{{ headerDescription }}</p>
                         </div>
-                        <svg class="user-chevron" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                            <polyline points="6 9 12 15 18 9"></polyline>
+                    </div>
+                    <div class="header-user-box">
+                        <button class="btn-notification" title="Notifications" @click="notifyComingSoon('Bildirishnomalar')">
+                            <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"></path>
+                                <path d="M13.73 21a2 2 0 0 1-3.46 0"></path>
+                            </svg>
+                            <span class="notif-badge"></span>
+                        </button>
+                        <div class="user-pill" title="User Account">
+                            <div class="user-avatar">M</div>
+                            <div class="user-info">
+                                <span class="user-name">Maxim</span>
+                                <span class="user-plan">Pro Plan</span>
+                            </div>
+                            <svg class="user-chevron" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <polyline points="6 9 12 15 18 9"></polyline>
                         </svg>
                     </div>
                 </div>
@@ -1764,13 +2181,69 @@
                     <p>Supports MP3, WAV, FLAC, M4A, OGG up to 100MB</p>
                 </div>
 
-                <!-- Stem Mode Selector -->
-                <div class="stem-mode-selector">
-                    <div class="mode-chip" :class="{ active: separationMode === '4stems' }" @click="separationMode = '4stems'">
-                        🎛️ 4 Stems (Vocals, Drums, Bass, Other)
+                <!-- Dual-Mode Stem Selection Cards -->
+                <div class="stem-cards-grid">
+                    <!-- Option 1: 2 Stems -->
+                    <div class="stem-mode-card" 
+                         :class="{ active: separationMode === '2stems' }" 
+                         @click="separationMode = '2stems'">
+                        <div class="card-top-row">
+                            <div class="card-icon-wrap">
+                                <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                    <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"></path>
+                                    <path d="M19 10v2a7 7 0 0 1-14 0v-2"></path>
+                                    <line x1="12" y1="19" x2="12" y2="23"></line>
+                                    <line x1="8" y1="23" x2="16" y2="23"></line>
+                                </svg>
+                            </div>
+                            <span class="card-badge badge-2stems">2 Stems</span>
+                        </div>
+                        <div class="card-title">Vocal & Instrumental</div>
+                        <div class="card-stems-icons">
+                            <span class="stem-icon-pill pill-vocal">
+                                <span class="pill-emoji">🎤</span> Vocal
+                            </span>
+                            <span class="stem-icon-pill pill-instrumental">
+                                <span class="pill-emoji">🎹</span> Instrumental
+                            </span>
+                        </div>
                     </div>
-                    <div class="mode-chip" :class="{ active: separationMode === '2stems' }" @click="separationMode = '2stems'">
-                        🎤 2 Stems (Vocals + Instrumental)
+
+                    <!-- Option 2: 4 Stems -->
+                    <div class="stem-mode-card" 
+                         :class="{ active: separationMode === '4stems' }" 
+                         @click="separationMode = '4stems'">
+                        <div class="card-top-row">
+                            <div class="card-icon-wrap">
+                                <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                    <line x1="4" y1="21" x2="4" y2="14"></line>
+                                    <line x1="4" y1="10" x2="4" y2="3"></line>
+                                    <line x1="12" y1="21" x2="12" y2="12"></line>
+                                    <line x1="12" y1="8" x2="12" y2="3"></line>
+                                    <line x1="20" y1="21" x2="20" y2="16"></line>
+                                    <line x1="20" y1="12" x2="20" y2="3"></line>
+                                    <line x1="1" y1="14" x2="7" y2="14"></line>
+                                    <line x1="9" y1="8" x2="15" y2="8"></line>
+                                    <line x1="17" y1="16" x2="23" y2="16"></line>
+                                </svg>
+                            </div>
+                            <span class="card-badge badge-4stems">4 Stems</span>
+                        </div>
+                        <div class="card-title">Vocal, Drums, Bass & Other</div>
+                        <div class="card-stems-icons">
+                            <span class="stem-icon-pill pill-vocal">
+                                <span class="pill-emoji">🎤</span> Vocal
+                            </span>
+                            <span class="stem-icon-pill pill-drums">
+                                <span class="pill-emoji">🥁</span> Drums
+                            </span>
+                            <span class="stem-icon-pill pill-bass">
+                                <span class="pill-emoji">🎸</span> Bass
+                            </span>
+                            <span class="stem-icon-pill pill-other">
+                                <span class="pill-emoji">🎷</span> Other
+                            </span>
+                        </div>
                     </div>
                 </div>
 
@@ -1790,7 +2263,7 @@
                     </svg>
                 </div>
                 <h2 style="font-size: 20px; font-weight: 700; margin-bottom: 6px;">AI Stem Separation in Progress</h2>
-                <p style="color: var(--text-secondary); font-size: 14px;">{{ statusMessage || 'Demucs is separating audio stems...' }}</p>
+                <p style="color: var(--text-secondary); font-size: 14px;">{{ statusMessage || 'AI model is processing audio stems...' }}</p>
 
                 <div class="progress-bar-shell">
                     <div class="progress-bar-inner" :style="{ width: progressPercent + '%' }"></div>
@@ -2197,6 +2670,10 @@
             </div>
         </div>
     </div>
+    <!-- END TAB 3: EDIT -->
+</div>
+<!-- END MAIN INNER CONTAINER -->
+
 </div>
 <!-- END RIGHT MAIN CONTENT WRAPPER -->
 
@@ -2217,10 +2694,36 @@
             setup() {
                 // Sidebar Navigation State: 'playlist' | 'stem' | 'edit'
                 const activeSidebarTab = ref(localStorage.getItem('active_studio_tab') || 'stem');
+                const isSidebarCollapsed = ref(localStorage.getItem('sidebar_collapsed') === 'true');
+                const isMobileSidebarOpen = ref(false);
+
+                const toggleSidebarCollapse = () => {
+                    if (window.innerWidth <= 900) {
+                        isMobileSidebarOpen.value = !isMobileSidebarOpen.value;
+                    } else {
+                        isSidebarCollapsed.value = !isSidebarCollapsed.value;
+                        localStorage.setItem('sidebar_collapsed', isSidebarCollapsed.value);
+                    }
+                };
+
+                const closeMobileSidebar = () => {
+                    isMobileSidebarOpen.value = false;
+                };
+
+                const handleNewStemClick = () => {
+                    switchTab('stem');
+                    resetToUpload();
+                    if (window.innerWidth <= 900) {
+                        closeMobileSidebar();
+                    }
+                };
 
                 const switchTab = (tab) => {
                     activeSidebarTab.value = tab;
                     localStorage.setItem('active_studio_tab', tab);
+                    if (window.innerWidth <= 900) {
+                        closeMobileSidebar();
+                    }
                     if (tab === 'stem') {
                         nextTick(() => {
                             renderWaveforms();
@@ -2251,7 +2754,7 @@
                         case 'playlist': return 'Musiqa pleylistlari va ajratilgan stemlar to\'plamini boshqaring';
                         case 'edit': return 'Stemlarni qirqish, tonallikni o\'zgartirish va miksni sozlash';
                         case 'stem':
-                        default: return 'Separate any song into high-quality stems using Demucs AI';
+                        default: return 'Separate any song into high-quality stems using AI (BS-RoFormer & Demucs)';
                     }
                 });
 
@@ -2295,13 +2798,48 @@
                 const waveformPeaks = reactive({});
                 const waveformCanvases = reactive({});
 
-                // Channel Stems Configuration
+                // Channel Stems Configuration & Dynamic Registry
+                const stemDefinitions = {
+                    vocals: { id: 'vocals', name: 'Vocals', icon: '🎤', color: '#0A84FF', volume: 1.0, muted: false },
+                    instrumental: { id: 'instrumental', name: 'Instrumental', icon: '🎹', color: '#30D158', volume: 1.0, muted: false },
+                    no_vocals: { id: 'no_vocals', name: 'Instrumental', icon: '🎹', color: '#30D158', volume: 1.0, muted: false },
+                    drums: { id: 'drums', name: 'Drums', icon: '🥁', color: '#FF375F', volume: 1.0, muted: false },
+                    bass: { id: 'bass', name: 'Bass', icon: '🎸', color: '#BF5AF2', volume: 1.0, muted: false },
+                    other: { id: 'other', name: 'Other', icon: '🎷', color: '#FF9F0A', volume: 1.0, muted: false }
+                };
+
                 const stemsList = reactive([
                     { id: 'vocals', name: 'Vocals', icon: '🎤', color: '#0A84FF', volume: 1.0, muted: false },
                     { id: 'drums', name: 'Drums', icon: '🥁', color: '#FF375F', volume: 1.0, muted: false },
                     { id: 'bass', name: 'Bass', icon: '🎸', color: '#BF5AF2', volume: 1.0, muted: false },
-                    { id: 'other', name: 'Instruments', icon: '🎹', color: '#30D158', volume: 1.0, muted: false }
+                    { id: 'other', name: 'Other', icon: '🎷', color: '#FF9F0A', volume: 1.0, muted: false }
                 ]);
+
+                const applyStemsConfiguration = (stemKeys) => {
+                    if (!stemKeys || !Array.isArray(stemKeys) || stemKeys.length === 0) return;
+                    const prevStates = {};
+                    stemsList.forEach(s => {
+                        prevStates[s.id] = { volume: s.volume, muted: s.muted };
+                    });
+
+                    stemsList.splice(0, stemsList.length);
+                    stemKeys.forEach(k => {
+                        const base = stemDefinitions[k] || {
+                            id: k,
+                            name: k.charAt(0).toUpperCase() + k.slice(1),
+                            icon: '🎵',
+                            color: '#30D158',
+                            volume: 1.0,
+                            muted: false
+                        };
+                        const prev = prevStates[k];
+                        stemsList.push({
+                            ...base,
+                            volume: prev ? prev.volume : 1.0,
+                            muted: prev ? prev.muted : false
+                        });
+                    });
+                };
 
                 // Polling Interval Handle
                 let pollTimer = null;
@@ -2637,6 +3175,9 @@
                         if (info.status === 'completed') {
                             activeTaskId.value = taskId;
                             localStorage.setItem('active_stem_task_id', taskId);
+                            if (info.stems && Array.isArray(info.stems)) {
+                                applyStemsConfiguration(info.stems);
+                            }
                             viewState.value = 'studio';
                             if (info.waveforms) {
                                 Object.entries(info.waveforms).forEach(([s, p]) => {
@@ -2771,6 +3312,11 @@
 
                 return {
                     activeSidebarTab,
+                    isSidebarCollapsed,
+                    isMobileSidebarOpen,
+                    toggleSidebarCollapse,
+                    closeMobileSidebar,
+                    handleNewStemClick,
                     switchTab,
                     activeTabLabel,
                     headerTitle,
