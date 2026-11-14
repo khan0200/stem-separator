@@ -129,11 +129,15 @@ class DualModeSeparatorEngine:
         demucs_out_dir = work_dir / "demucs_temp"
         demucs_out_dir.mkdir(parents=True, exist_ok=True)
 
+        import torch
+        device = "cuda" if torch.cuda.is_available() else "cpu"
+        threads = "4" if device == "cuda" else "2"
+
         cmd = [
             str(DEMUCS_EXE),
             "-n", "htdemucs",
-            "-d", "cpu",
-            "-j", "2",
+            "-d", device,
+            "-j", threads,
             "--mp3",
             "--mp3-bitrate", "256",
             "-o", str(demucs_out_dir),
