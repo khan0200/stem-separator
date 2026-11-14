@@ -490,56 +490,72 @@
             50% { opacity: 0.5; transform: scale(0.85); }
         }
 
-        /* Sidebar Status Card */
-        .sidebar-status-card {
+        /* Sidebar Footer (User profile & notifications at bottom of sidebar) */
+        .sidebar-footer {
             margin-top: auto;
-            background: rgba(255, 255, 255, 0.03);
-            border: 1px solid rgba(255, 255, 255, 0.06);
-            border-radius: 16px;
-            padding: 14px;
-            display: flex;
-            flex-direction: column;
-            gap: 6px;
-        }
-
-        .status-indicator {
+            padding-top: 14px;
+            border-top: 1px solid rgba(255, 255, 255, 0.08);
             display: flex;
             align-items: center;
+            justify-content: space-between;
             gap: 8px;
-        }
-
-        .status-dot {
-            width: 7px;
-            height: 7px;
-            border-radius: 50%;
-            background: var(--accent-green);
-            box-shadow: 0 0 8px var(--accent-green);
-        }
-
-        .status-title {
-            font-size: 12px;
-            font-weight: 700;
-            color: #fff;
-        }
-
-        .status-sub {
-            font-size: 11px;
-            color: var(--text-muted);
-            line-height: 1.4;
-        }
-
-        .status-meter-box {
             width: 100%;
-            height: 4px;
-            background: rgba(255, 255, 255, 0.08);
-            border-radius: 4px;
-            overflow: hidden;
-            margin-top: 4px;
         }
 
-        .status-meter-bar {
-            height: 100%;
-            background: linear-gradient(90deg, #30D158, #0A84FF);
+        .sidebar-footer .user-pill {
+            flex: 1;
+            min-width: 0;
+            display: flex;
+            align-items: center;
+            gap: 9px;
+            background: rgba(255, 255, 255, 0.04);
+            border: 1px solid rgba(255, 255, 255, 0.08);
+            padding: 6px 10px 6px 6px;
+            border-radius: 12px;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .sidebar-footer .user-pill:hover {
+            background: rgba(255, 255, 255, 0.08);
+            border-color: rgba(255, 255, 255, 0.16);
+        }
+
+        .sidebar-footer .user-info {
+            flex: 1;
+            min-width: 0;
+            overflow: hidden;
+        }
+
+        .sidebar-footer .user-name {
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            font-size: 13px;
+        }
+
+        .sidebar-footer .btn-notification {
+            flex-shrink: 0;
+            width: 38px;
+            height: 38px;
+            border-radius: 12px;
+        }
+
+        .full-sidebar.collapsed .sidebar-footer {
+            flex-direction: column;
+            gap: 10px;
+            padding-top: 10px;
+        }
+
+        .full-sidebar.collapsed .sidebar-footer .user-pill {
+            padding: 6px;
+            border-radius: 50%;
+            justify-content: center;
+        }
+
+        .full-sidebar.collapsed .sidebar-footer .user-info,
+        .full-sidebar.collapsed .sidebar-footer .user-chevron {
+            display: none;
         }
 
         /* Main Content Wrapper */
@@ -985,9 +1001,20 @@
         .studio-header {
             display: flex;
             align-items: center;
-            justify-content: space-between;
-            margin-bottom: 24px;
+            justify-content: flex-start;
+            margin-bottom: 0;
             padding: 0 4px;
+            min-height: 0;
+        }
+
+        #app.app-shell.sidebar-collapsed .studio-header {
+            margin-bottom: 16px;
+        }
+
+        @media (max-width: 1024px) {
+            .studio-header {
+                margin-bottom: 16px;
+            }
         }
 
         .header-title-box h1 {
@@ -2075,6 +2102,27 @@
                     </div>
                 </div>
             </div>
+
+            <!-- Bottom User Profile & Notification in Sidebar -->
+            <div class="sidebar-footer">
+                <div class="user-pill" title="User Account">
+                    <div class="user-avatar">M</div>
+                    <div class="user-info">
+                        <span class="user-name">Maxim</span>
+                        <span class="user-plan">Pro Plan</span>
+                    </div>
+                    <svg class="user-chevron" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <polyline points="6 9 12 15 18 9"></polyline>
+                    </svg>
+                </div>
+                <button class="btn-notification" title="Notifications" @click="notifyComingSoon('Bildirishnomalar')">
+                    <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"></path>
+                        <path d="M13.73 21a2 2 0 0 1-3.46 0"></path>
+                    </svg>
+                    <span class="notif-badge"></span>
+                </button>
+            </div>
         </aside>
 
         <!-- Right Main Studio Content Area (Full remaining width, scrolls independently) -->
@@ -2104,45 +2152,15 @@
             <div class="main-inner-container">
                 <!-- 1. Header Navigation -->
                 <header class="studio-header">
-                    <div class="header-left-cluster">
-                        <!-- Open Sidebar Button when collapsed or on mobile -->
-                        <button class="btn-sidebar-open" title="Open Sidebar" @click="toggleSidebarCollapse">
-                            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                                <rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect>
-                                <line x1="9" y1="3" x2="9" y2="21"></line>
-                                <path d="M12 9l3 3-3 3"></path>
-                            </svg>
-                        </button>
-                        <div class="header-title-box">
-                            <div class="header-breadcrumb">
-                                <span>Audio Studio</span>
-                                <span class="crumb-divider">/</span>
-                                <span class="crumb-active">{{ activeTabLabel }}</span>
-                            </div>
-                            <h1>{{ headerTitle }}</h1>
-                            <p>{{ headerDescription }}</p>
-                        </div>
-                    </div>
-                    <div class="header-user-box">
-                        <button class="btn-notification" title="Notifications" @click="notifyComingSoon('Bildirishnomalar')">
-                            <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                                <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"></path>
-                                <path d="M13.73 21a2 2 0 0 1-3.46 0"></path>
-                            </svg>
-                            <span class="notif-badge"></span>
-                        </button>
-                        <div class="user-pill" title="User Account">
-                            <div class="user-avatar">M</div>
-                            <div class="user-info">
-                                <span class="user-name">Maxim</span>
-                                <span class="user-plan">Pro Plan</span>
-                            </div>
-                            <svg class="user-chevron" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                                <polyline points="6 9 12 15 18 9"></polyline>
+                    <!-- Open Sidebar Button when collapsed or on mobile -->
+                    <button class="btn-sidebar-open" title="Open Sidebar" @click="toggleSidebarCollapse">
+                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect>
+                            <line x1="9" y1="3" x2="9" y2="21"></line>
+                            <path d="M12 9l3 3-3 3"></path>
                         </svg>
-                    </div>
-                </div>
-            </header>
+                    </button>
+                </header>
 
             <!-- TAB 1: STEM (XOZIRGI MAVJUD narsa STEM ni ichida bo'lsin) -->
             <div v-show="activeSidebarTab === 'stem'" class="tab-pane-container">
