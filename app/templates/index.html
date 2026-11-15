@@ -2795,7 +2795,8 @@
                                     {{ detectedBpm || '—' }} BPM
                                 </span>
                                 <span class="subtext-bullet">•</span>
-                                <span>Lossless stems</span>
+                                <span v-if="stemCacheProgress !== null" title="Downloading stems so seeking is instant">Loading stems {{ stemCacheProgress }}%</span>
+                                <span v-else>Lossless stems</span>
                                 <span class="subtext-bullet">•</span>
                                 <span>44.1 kHz</span>
                             </div>
@@ -2937,7 +2938,8 @@
                 <div class="dock-progress-box">
                     <input type="range" class="stem-slider" min="0" :max="masterDuration || 100" step="0.1" 
                            :value="masterCurrentTime" 
-                           @input="handleScrubberInput($event)">
+                           @input="handleScrubberInput($event)"
+                           @change="handleScrubberChange($event)">
                 </div>
             </div>
 
@@ -3363,8 +3365,15 @@
                 // Set from the server's probe on load, then refined from the loaded stems.
                 const masterDuration = ref(0);
                 const isLooping = ref(false);
-                const activeSoloStem = ref(null);
-                const isFullMixActive = ref(true);
+                // Derived from the mute flags, never stored separately, so the S and
+                // Full Mix buttons can't disagree with what is actually audible.
+                // (stemsList is declared below; these only run after setup completes.)
+                const activeSoloStem = computed(() => {
+                    if (stemsList.length < 2) return null;
+                    const audible = stemsList.filter(s => !s.muted);
+                    return audible.length === 1 ? audible[0].id : null;
+                });
+                const isFullMixActive = computed(() => stemsList.every(s => !s.muted));
 
                 // Audio Objects & Waveform Peak Data (plain object: media elements must not be proxied)
                 const audioInstances = {};
@@ -3438,6 +3447,101 @@
                     if (durations.length) masterDuration.value = Math.max(...durations);
                 };
 
+                // In-memory copies of the stems. Over a remote tunnel (Colab), every seek to an
+                // unbuffered position costs one network round trip per stem; local blobs seek instantly.
+                const stemCacheProgress = ref(null);  // null = idle, 0-99 = downloading
+                let stemBlobUrls = {};
+                let blobSwapPending = false;
+
+                // While playback is starting, the cache download stops reading (network backpressure)
+                // so the streams the user is waiting on get the bandwidth.
+                // Counted, because overlapping play requests (fast seeks) each take a hold.
+                let cacheHold = null;
+                let cacheHoldCount = 0;
+                const holdCaching = () => {
+                    cacheHoldCount++;
+                    if (cacheHold) return;
+                    let release;
+                    const promise = new Promise(resolve => { release = resolve; });
+                    cacheHold = { promise, release };
+                };
+                const resumeCaching = (force = false) => {
+                    cacheHoldCount = force ? 0 : Math.max(0, cacheHoldCount - 1);
+                    if (!cacheHold || cacheHoldCount > 0) return;
+                    cacheHold.release();
+                    cacheHold = null;
+                };
+
+                const revokeStemBlobs = () => {
+                    Object.values(stemBlobUrls).forEach(url => URL.revokeObjectURL(url));
+                    stemBlobUrls = {};
+                    blobSwapPending = false;
+                };
+
+                // Point every element at its blob. Only called while paused or mid-seek,
+                // because changing src restarts the element.
+                const swapToBlobSources = () => {
+                    if (!blobSwapPending) return;
+                    blobSwapPending = false;
+                    const at = masterCurrentTime.value;
+                    Object.entries(audioInstances).forEach(([id, audio]) => {
+                        const url = stemBlobUrls[id];
+                        if (!url) return;
+                        audio.preload = 'auto';
+                        audio.src = url;
+                        audio.currentTime = at;  // Applied once metadata loads.
+                    });
+                };
+
+                const cacheStemsInMemory = async (taskId, signal) => {
+                    const ids = Object.keys(audioInstances);
+                    const loaded = {};
+                    const totals = {};
+                    const created = [];
+                    stemCacheProgress.value = 0;
+                    const report = () => {
+                        const total = ids.reduce((sum, id) => sum + (totals[id] || 0), 0);
+                        const done = ids.reduce((sum, id) => sum + (loaded[id] || 0), 0);
+                        if (total) stemCacheProgress.value = Math.min(99, Math.round(done / total * 100));
+                    };
+                    try {
+                        // One download at a time: browsers allow only 6 connections per host over
+                        // HTTP/1.1, and the playing <audio> streams need 4 of them.
+                        const entries = [];
+                        for (const id of ids) {
+                            const url = `/api/stream/${encodeURIComponent(taskId)}/${encodeURIComponent(id)}`;
+                            const res = await fetch(url, { signal });
+                            if (!res.ok || !res.body) throw new Error(`HTTP ${res.status}`);
+                            totals[id] = Number(res.headers.get('content-length')) || 0;
+                            // Estimate the remaining files' sizes from this one so progress is meaningful.
+                            ids.forEach(other => { if (!totals[other]) totals[other] = totals[id]; });
+                            const reader = res.body.getReader();
+                            const chunks = [];
+                            for (;;) {
+                                if (cacheHold) await cacheHold.promise;
+                                if (signal.aborted) throw new DOMException('Aborted', 'AbortError');
+                                const { done, value } = await reader.read();
+                                if (done) break;
+                                chunks.push(value);
+                                loaded[id] = (loaded[id] || 0) + value.length;
+                                report();
+                            }
+                            const blobUrl = URL.createObjectURL(new Blob(chunks, { type: 'audio/mpeg' }));
+                            created.push(blobUrl);
+                            entries.push([id, blobUrl]);
+                        }
+                        if (signal.aborted) throw new DOMException('Aborted', 'AbortError');
+                        stemBlobUrls = Object.fromEntries(entries);
+                        blobSwapPending = true;
+                        if (!isMasterPlaying.value) swapToBlobSources();
+                    } catch (e) {
+                        created.forEach(url => URL.revokeObjectURL(url));
+                        if (!signal.aborted) console.warn('Stem caching failed; streaming instead:', e);
+                    } finally {
+                        if (!signal.aborted) stemCacheProgress.value = null;
+                    }
+                };
+
                 const stopPlaybackLoop = () => {
                     if (syncAnimationFrame) cancelAnimationFrame(syncAnimationFrame);
                     syncAnimationFrame = null;
@@ -3449,7 +3553,7 @@
                     syncAnimationFrame = requestAnimationFrame(playbackTick);
                     const primary = primaryAudio();
                     if (!primary) return;
-                    masterCurrentTime.value = primary.currentTime;
+                    if (!isScrubbing && !isSliderDragging) masterCurrentTime.value = primary.currentTime;
 
                     if (!primary.paused && !primary.seeking) {
                         const now = performance.now();
@@ -3484,12 +3588,15 @@
                         audioListenersAbort.abort();
                         audioListenersAbort = null;
                     }
+                    resumeCaching(true);  // Let a held download loop wake up and see the abort.
                     Object.values(audioInstances).forEach(audio => {
                         audio.pause();
                         audio.removeAttribute('src');
                         audio.load();  // Releases the network connection and decoder.
                     });
                     Object.keys(audioInstances).forEach(k => delete audioInstances[k]);
+                    revokeStemBlobs();
+                    stemCacheProgress.value = null;
                     lastHardSync.clear();
                     isMasterPlaying.value = false;
                     masterCurrentTime.value = 0;
@@ -3513,7 +3620,9 @@
                     stemsList.forEach(stem => {
                         const url = `/api/stream/${encodeURIComponent(taskId)}/${encodeURIComponent(stem.id)}`;
                         const audio = new Audio(url);
-                        audio.preload = 'auto';
+                        // Streaming is only the fallback until the in-memory copy is ready,
+                        // so don't download everything twice.
+                        audio.preload = 'metadata';
                         audioInstances[stem.id] = audio;
                         audio.addEventListener('loadedmetadata', () => {
                             updateDurationFromAudio();
@@ -3523,6 +3632,11 @@
 
                     const primary = primaryAudio();
                     if (primary) primary.addEventListener('ended', onPrimaryEnded, { signal });
+                    // Start caching a little later so it doesn't compete with an immediate first play.
+                    const cacheTimer = setTimeout(() => {
+                        if (!signal.aborted) cacheStemsInMemory(taskId, signal);
+                    }, 4000);
+                    signal.addEventListener('abort', () => clearTimeout(cacheTimer));
                 };
 
                 // Resolves once the element has data to play at its current position (or after a timeout).
@@ -3558,20 +3672,27 @@
 
                     // Align every stem first, then start them together once all are buffered.
                     audios.forEach(audio => {
+                        audio.preload = 'auto';  // Playback requested: buffer for real now.
                         audio.playbackRate = 1;
                         if (Math.abs(audio.currentTime - startAt) > 0.005) audio.currentTime = startAt;
                     });
-                    await Promise.all(audios.map(audio => waitUntilPlayable(audio)));
-                    if (token !== playToken) return;
+                    const streaming = audios.some(audio => !audio.src.startsWith('blob:'));
+                    if (streaming) holdCaching();
+                    try {
+                        await Promise.all(audios.map(audio => waitUntilPlayable(audio)));
+                        if (token !== playToken) return;
 
-                    const results = await Promise.allSettled(audios.map(audio => audio.play()));
-                    if (token !== playToken) return;
-                    if (results.every(r => r.status === 'rejected')) {
-                        console.warn('Playback was blocked:', results[0].reason);
-                        isMasterPlaying.value = false;
-                        return;
+                        const results = await Promise.allSettled(audios.map(audio => audio.play()));
+                        if (token !== playToken) return;
+                        if (results.every(r => r.status === 'rejected')) {
+                            console.warn('Playback was blocked:', results[0].reason);
+                            isMasterPlaying.value = false;
+                            return;
+                        }
+                        startPlaybackLoop();
+                    } finally {
+                        if (streaming) resumeCaching();
                     }
-                    startPlaybackLoop();
                 };
 
                 const pauseMaster = () => {
@@ -3581,6 +3702,7 @@
                     const primary = primaryAudio();
                     if (primary) masterCurrentTime.value = primary.currentTime;
                     isMasterPlaying.value = false;
+                    swapToBlobSources();
                     renderWaveforms();
                 };
 
@@ -3609,6 +3731,8 @@
                         playToken++;
                         Object.values(audioInstances).forEach(audio => audio.pause());
                     }
+                    // A seek is a natural moment to switch to the in-memory copies.
+                    swapToBlobSources();
                     Object.values(audioInstances).forEach(audio => {
                         audio.currentTime = targetSec;
                     });
@@ -3616,19 +3740,43 @@
                     if (wasPlaying) playMaster();
                 };
 
-                const handleScrubberInput = (event) => {
-                    seekTo(parseFloat(event.target.value));
+                // While dragging, only the playhead moves; the real seek happens once on release.
+                // Seeking on every mouse move restarted all stem requests and made playback stall.
+                let isScrubbing = false;
+                let isSliderDragging = false;
+                let pendingScrubTime = null;
+                let activeWaveBox = null;
+
+                const previewScrub = (seconds) => {
+                    const target = Math.max(0, Math.min(seconds, masterDuration.value || 0));
+                    pendingScrubTime = target;
+                    masterCurrentTime.value = target;
+                    renderWaveforms();
                 };
 
-                // Interactive Waveform Dragging & Scrubbing Engine
-                let isScrubbing = false;
-                let activeWaveBox = null;
+                const commitScrub = () => {
+                    if (pendingScrubTime === null) return;
+                    const target = pendingScrubTime;
+                    pendingScrubTime = null;
+                    seekTo(target);
+                };
+
+                const handleScrubberInput = (event) => {
+                    isSliderDragging = true;
+                    previewScrub(parseFloat(event.target.value));
+                };
+
+                const handleScrubberChange = (event) => {
+                    isSliderDragging = false;
+                    pendingScrubTime = parseFloat(event.target.value);
+                    commitScrub();
+                };
 
                 const updateScrub = (clientX) => {
                     if (!activeWaveBox || !masterDuration.value) return;
                     const rect = activeWaveBox.getBoundingClientRect();
                     const pct = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
-                    seekTo(pct * masterDuration.value);
+                    previewScrub(pct * masterDuration.value);
                 };
 
                 const startWaveformScrub = (event) => {
@@ -3658,6 +3806,7 @@
                         isScrubbing = false;
                         activeWaveBox = null;
                         document.body.style.cursor = '';
+                        commitScrub();
                     }
                 };
 
@@ -3671,6 +3820,7 @@
                     if (isScrubbing) {
                         isScrubbing = false;
                         activeWaveBox = null;
+                        commitScrub();
                     }
                 };
 
@@ -3678,8 +3828,6 @@
                 const handleSoloPlay = (stemId) => {
                     if (activeSoloStem.value === stemId) {
                         // Exit solo mode: restore all tracks into the mix without interrupting playback!
-                        activeSoloStem.value = null;
-                        isFullMixActive.value = true;
                         stemsList.forEach(stem => {
                             stem.muted = false;
                             const audio = audioInstances[stem.id];
@@ -3691,10 +3839,7 @@
                         return;
                     }
 
-                    // Switch Solo to this stem
-                    activeSoloStem.value = stemId;
-                    isFullMixActive.value = false;
-
+                    // Solo this stem: everything else is muted (that is what lights up S).
                     stemsList.forEach(stem => {
                         stem.muted = (stem.id !== stemId);
                         const audio = audioInstances[stem.id];
@@ -3718,9 +3863,6 @@
                     if (audio) {
                         audio.volume = stem.muted ? 0 : stem.volume;
                     }
-                    if (activeSoloStem.value === stemId && stem.muted) {
-                        activeSoloStem.value = null;
-                    }
                     renderWaveforms();
                 };
 
@@ -3737,8 +3879,6 @@
                 };
 
                 const toggleFullMix = () => {
-                    activeSoloStem.value = null;
-                    isFullMixActive.value = true;
                     stemsList.forEach(stem => {
                         stem.muted = false;
                         stem.volume = 1.0;
@@ -4221,6 +4361,8 @@
                     toggleFullMix,
                     seekTo,
                     handleScrubberInput,
+                    handleScrubberChange,
+                    stemCacheProgress,
                     startWaveformScrub,
                     startWaveformTouch,
                     triggerFileInput,
