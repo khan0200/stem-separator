@@ -2537,7 +2537,7 @@
                     <div class="track-pill-dot"></div>
                     <div class="track-pill-info">
                         <span class="track-pill-title" :title="activeSongTitle">{{ activeSongTitle }}</span>
-                        <span class="track-pill-sub">4 Stems • {{ detectedBpm }} BPM</span>
+                        <span class="track-pill-sub">{{ stemsList.length }} Stems • {{ detectedBpm || '—' }} BPM</span>
                     </div>
                 </div>
             </div>
@@ -2792,10 +2792,10 @@
                                     <svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor">
                                         <path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/>
                                     </svg>
-                                    {{ detectedBpm }} BPM
+                                    {{ detectedBpm || '—' }} BPM
                                 </span>
                                 <span class="subtext-bullet">•</span>
-                                <span>320 kbps</span>
+                                <span>Lossless stems</span>
                                 <span class="subtext-bullet">•</span>
                                 <span>44.1 kHz</span>
                             </div>
@@ -3224,10 +3224,12 @@
                     16-bit (44.1 kHz)
                 </div>
                 <div class="modal-chip" :class="{ active: exportForm.quality === 'wav24' }" @click="exportForm.quality = 'wav24'">
-                    24-bit (48 kHz Studio)
+                    24-bit (44.1 kHz Studio)
                 </div>
             </div>
         </div>
+
+        <p v-if="exportForm.error" role="alert" style="color: #FF453A; font-size: 13px; margin: 0 0 12px;">{{ exportForm.error }}</p>
 
         <div class="modal-actions">
             <button class="btn-modal-cancel" @click="closeDownloadModal">Cancel</button>
@@ -3332,7 +3334,9 @@
                 const viewState = ref(savedTaskId ? 'studio' : 'upload');
                 const activeTaskId = ref(savedTaskId || null);
                 const activeSongTitle = ref(localStorage.getItem('active_stem_title') || '');
-                const detectedBpm = ref(parseInt(localStorage.getItem('active_stem_bpm')) || 87);
+                // null = tempo unknown (shown as "—"), never a made-up default.
+                const detectedBpm = ref(parseInt(localStorage.getItem('active_stem_bpm')) || null);
+                const MAX_UPLOAD_BYTES = 75 * 1024 * 1024;
 
                 // Upload & Progress State
                 const fileInput = ref(null);
@@ -3356,13 +3360,14 @@
                 // Master Playback Engine State
                 const isMasterPlaying = ref(false);
                 const masterCurrentTime = ref(0);
-                const masterDuration = ref(359);
+                // Set from the server's probe on load, then refined from the loaded stems.
+                const masterDuration = ref(0);
                 const isLooping = ref(false);
                 const activeSoloStem = ref(null);
                 const isFullMixActive = ref(true);
 
-                // Audio Objects & Waveform Peak Data
-                const audioInstances = reactive({});
+                // Audio Objects & Waveform Peak Data (plain object: media elements must not be proxied)
+                const audioInstances = {};
                 const waveformPeaks = reactive({});
                 const waveformCanvases = reactive({});
 
@@ -3409,70 +3414,174 @@
                     });
                 };
 
-                // Polling Interval Handle
+                // Polling timeout handle & playback animation frame
                 let pollTimer = null;
                 let syncAnimationFrame = null;
+                let audioListenersAbort = null;
+                let playToken = 0;  // Invalidates a pending play() when the user pauses/seeks meanwhile.
+                const lastHardSync = new Map();
+
+                // Drift thresholds between each stem and the primary (reference) stem.
+                const DRIFT_SOFT_SECONDS = 0.015;  // nudge playbackRate
+                const DRIFT_HARD_SECONDS = 0.08;   // jump currentTime
+                const DRIFT_RATE_NUDGE = 0.02;
 
                 // ==================================================
                 // AUDIO ENGINE & SYNCHRONIZATION
                 // ==================================================
-                const initAudioInstances = (taskId) => {
-                    // Destroy previous audio instances
-                    stopAllAudio();
+                const primaryAudio = () => audioInstances['vocals'] || Object.values(audioInstances)[0] || null;
+
+                const updateDurationFromAudio = () => {
+                    const durations = Object.values(audioInstances)
+                        .map(a => a.duration)
+                        .filter(d => Number.isFinite(d) && d > 0);
+                    if (durations.length) masterDuration.value = Math.max(...durations);
+                };
+
+                const stopPlaybackLoop = () => {
+                    if (syncAnimationFrame) cancelAnimationFrame(syncAnimationFrame);
+                    syncAnimationFrame = null;
+                    Object.values(audioInstances).forEach(a => { a.playbackRate = 1; });
+                };
+
+                // Runs every frame while playing: smooth playhead + keeps stems locked to the primary.
+                const playbackTick = () => {
+                    syncAnimationFrame = requestAnimationFrame(playbackTick);
+                    const primary = primaryAudio();
+                    if (!primary) return;
+                    masterCurrentTime.value = primary.currentTime;
+
+                    if (!primary.paused && !primary.seeking) {
+                        const now = performance.now();
+                        Object.values(audioInstances).forEach(audio => {
+                            if (audio === primary || audio.paused || audio.seeking || audio.ended) return;
+                            const drift = audio.currentTime - primary.currentTime;
+                            const absDrift = Math.abs(drift);
+                            if (absDrift > DRIFT_HARD_SECONDS) {
+                                if (now - (lastHardSync.get(audio) || 0) > 500) {
+                                    lastHardSync.set(audio, now);
+                                    audio.playbackRate = 1;
+                                    audio.currentTime = primary.currentTime;
+                                }
+                            } else if (absDrift > DRIFT_SOFT_SECONDS) {
+                                audio.playbackRate = drift > 0 ? 1 - DRIFT_RATE_NUDGE : 1 + DRIFT_RATE_NUDGE;
+                            } else if (audio.playbackRate !== 1) {
+                                audio.playbackRate = 1;
+                            }
+                        });
+                    }
+                    renderWaveforms();
+                };
+
+                const startPlaybackLoop = () => {
+                    if (!syncAnimationFrame) syncAnimationFrame = requestAnimationFrame(playbackTick);
+                };
+
+                const destroyAudioInstances = () => {
+                    playToken++;
+                    stopPlaybackLoop();
+                    if (audioListenersAbort) {
+                        audioListenersAbort.abort();
+                        audioListenersAbort = null;
+                    }
+                    Object.values(audioInstances).forEach(audio => {
+                        audio.pause();
+                        audio.removeAttribute('src');
+                        audio.load();  // Releases the network connection and decoder.
+                    });
                     Object.keys(audioInstances).forEach(k => delete audioInstances[k]);
+                    lastHardSync.clear();
+                    isMasterPlaying.value = false;
+                    masterCurrentTime.value = 0;
+                };
+
+                const onPrimaryEnded = () => {
+                    if (isLooping.value) {
+                        seekTo(0);
+                        playMaster();
+                    } else {
+                        pauseMaster();
+                        seekTo(0);
+                    }
+                };
+
+                const initAudioInstances = (taskId) => {
+                    destroyAudioInstances();
+                    audioListenersAbort = new AbortController();
+                    const { signal } = audioListenersAbort;
 
                     stemsList.forEach(stem => {
                         const url = `/api/stream/${encodeURIComponent(taskId)}/${encodeURIComponent(stem.id)}`;
                         const audio = new Audio(url);
-                        audio.preload = 'metadata';
+                        audio.preload = 'auto';
                         audioInstances[stem.id] = audio;
-
                         audio.addEventListener('loadedmetadata', () => {
-                            if (audio.duration && audio.duration > masterDuration.value) {
-                                masterDuration.value = audio.duration;
-                            }
+                            updateDurationFromAudio();
                             renderWaveforms();
-                        });
+                        }, { signal });
                     });
 
-                    // Primary reference track sync loop
-                    const primary = audioInstances['vocals'] || Object.values(audioInstances)[0];
-                    if (primary) {
-                        primary.addEventListener('timeupdate', () => {
-                            masterCurrentTime.value = primary.currentTime;
-                            renderWaveforms();
-                        });
-
-                        primary.addEventListener('ended', () => {
-                            if (isLooping.value) {
-                                seekTo(0);
-                                playMaster();
-                            } else {
-                                pauseMaster();
-                                seekTo(0);
-                            }
-                        });
-                    }
+                    const primary = primaryAudio();
+                    if (primary) primary.addEventListener('ended', onPrimaryEnded, { signal });
                 };
 
-                const playMaster = () => {
-                    const primary = audioInstances['vocals'] || Object.values(audioInstances)[0];
-                    const currentTime = primary ? primary.currentTime : 0;
+                // Resolves once the element has data to play at its current position (or after a timeout).
+                const waitUntilPlayable = (audio, timeoutMs = 5000) => new Promise(resolve => {
+                    const ready = () => audio.readyState >= 3 && !audio.seeking;
+                    if (ready()) return resolve();
+                    const finish = () => {
+                        clearTimeout(timer);
+                        audio.removeEventListener('canplay', check);
+                        audio.removeEventListener('seeked', check);
+                        resolve();
+                    };
+                    const check = () => { if (ready()) finish(); };
+                    const timer = setTimeout(finish, timeoutMs);
+                    audio.addEventListener('canplay', check);
+                    audio.addEventListener('seeked', check);
+                });
 
+                const applyStemVolumes = () => {
                     Object.entries(audioInstances).forEach(([id, audio]) => {
-                        audio.currentTime = currentTime;
                         const stem = stemsList.find(s => s.id === id);
-                        if (stem) {
-                            audio.volume = (stem.muted ? 0 : stem.volume);
-                        }
-                        audio.play().catch(e => console.warn('Audio play request interrupted:', e));
+                        if (stem) audio.volume = stem.muted ? 0 : stem.volume;
                     });
+                };
+
+                const playMaster = async () => {
+                    const audios = Object.values(audioInstances);
+                    if (!audios.length) return;
+                    const token = ++playToken;
+                    const startAt = masterCurrentTime.value;
                     isMasterPlaying.value = true;
+                    applyStemVolumes();
+
+                    // Align every stem first, then start them together once all are buffered.
+                    audios.forEach(audio => {
+                        audio.playbackRate = 1;
+                        if (Math.abs(audio.currentTime - startAt) > 0.005) audio.currentTime = startAt;
+                    });
+                    await Promise.all(audios.map(audio => waitUntilPlayable(audio)));
+                    if (token !== playToken) return;
+
+                    const results = await Promise.allSettled(audios.map(audio => audio.play()));
+                    if (token !== playToken) return;
+                    if (results.every(r => r.status === 'rejected')) {
+                        console.warn('Playback was blocked:', results[0].reason);
+                        isMasterPlaying.value = false;
+                        return;
+                    }
+                    startPlaybackLoop();
                 };
 
                 const pauseMaster = () => {
+                    playToken++;
                     Object.values(audioInstances).forEach(audio => audio.pause());
+                    stopPlaybackLoop();
+                    const primary = primaryAudio();
+                    if (primary) masterCurrentTime.value = primary.currentTime;
                     isMasterPlaying.value = false;
+                    renderWaveforms();
                 };
 
                 const toggleMasterPlay = () => {
@@ -3492,12 +3601,19 @@
                 };
 
                 const seekTo = (seconds) => {
-                    const targetSec = Math.max(0, Math.min(seconds, masterDuration.value));
+                    const targetSec = Math.max(0, Math.min(seconds, masterDuration.value || 0));
                     masterCurrentTime.value = targetSec;
+                    const wasPlaying = isMasterPlaying.value;
+                    if (wasPlaying) {
+                        // Pause during the seek so stems don't resume one by one, out of step.
+                        playToken++;
+                        Object.values(audioInstances).forEach(audio => audio.pause());
+                    }
                     Object.values(audioInstances).forEach(audio => {
                         audio.currentTime = targetSec;
                     });
                     renderWaveforms();
+                    if (wasPlaying) playMaster();
                 };
 
                 const handleScrubberInput = (event) => {
@@ -3744,9 +3860,14 @@
                             activeSongTitle.value = info.original_name;
                             localStorage.setItem('active_stem_title', info.original_name);
                         }
+                        detectedBpm.value = info.bpm || null;
                         if (info.bpm) {
-                            detectedBpm.value = info.bpm;
                             localStorage.setItem('active_stem_bpm', info.bpm);
+                        } else {
+                            localStorage.removeItem('active_stem_bpm');
+                        }
+                        if (info.duration) {
+                            masterDuration.value = info.duration;
                         }
 
                         if (info.status === 'completed') {
@@ -3766,6 +3887,8 @@
                         } else if (info.status === 'processing' || info.status === 'pending') {
                             viewState.value = 'processing';
                             activeTaskId.value = taskId;
+                            progressPercent.value = info.progress || 0;
+                            statusMessage.value = info.message || '';
                             localStorage.setItem('active_stem_task_id', taskId);
                             startPolling(taskId);
                         } else if (info.status === 'error' || info.status === 'cancelled') {
@@ -3775,33 +3898,72 @@
                             viewState.value = 'upload';
                         }
                     } catch (e) {
+                        // Server unreachable: keep the saved task so a reload can resume it.
                         console.error('Task restore error:', e);
+                        errorMessage.value = 'Could not reach the server. Check that it is running, then reload the page.';
+                        viewState.value = 'upload';
                     }
                 };
 
+                const POLL_INTERVAL_MS = 2500;
+                const MAX_POLL_FAILURES = 12;  // ~30 s of consecutive failures
+
+                const stopPolling = () => {
+                    if (pollTimer) clearTimeout(pollTimer);
+                    pollTimer = null;
+                };
+
+                const abortProcessingView = (message, forgetTask) => {
+                    stopPolling();
+                    if (forgetTask) {
+                        localStorage.removeItem('active_stem_task_id');
+                        activeTaskId.value = null;
+                    }
+                    errorMessage.value = message;
+                    viewState.value = 'upload';
+                };
+
+                // setTimeout chain (not setInterval) so slow responses never overlap.
                 const startPolling = (taskId) => {
-                    if (pollTimer) clearInterval(pollTimer);
-                    pollTimer = setInterval(async () => {
+                    stopPolling();
+                    let failures = 0;
+                    const poll = async () => {
+                        let info = null;
                         try {
                             const res = await fetch(`/api/status/${encodeURIComponent(taskId)}`);
-                            if (!res.ok) return;
-                            const info = await res.json();
-
-                            progressPercent.value = info.progress || 0;
-                            statusMessage.value = info.message || '';
-
-                            if (info.status === 'completed') {
-                                clearInterval(pollTimer);
-                                loadTask(taskId);
-                            } else if (info.status === 'error' || info.status === 'cancelled') {
-                                clearInterval(pollTimer);
-                                errorMessage.value = info.error || 'Separation cancelled.';
-                                viewState.value = 'upload';
+                            if (res.status === 404) {
+                                abortProcessingView('This separation task no longer exists on the server. Please upload the file again.', true);
+                                return;
                             }
+                            if (res.ok) info = await res.json();
                         } catch (e) {
                             console.warn('Poll error:', e);
                         }
-                    }, 2500);
+                        if (activeTaskId.value !== taskId) return;  // User cancelled or moved on.
+
+                        if (!info) {
+                            failures += 1;
+                            if (failures >= MAX_POLL_FAILURES) {
+                                abortProcessingView('Lost connection to the server. Check that it is running, then reload the page to resume.', false);
+                                return;
+                            }
+                        } else {
+                            failures = 0;
+                            progressPercent.value = info.progress || 0;
+                            statusMessage.value = info.message || '';
+                            if (info.status === 'completed') {
+                                stopPolling();
+                                loadTask(taskId);
+                                return;
+                            }
+                            if (info.status === 'error' || info.status === 'cancelled') {
+                                abortProcessingView(info.error || 'Separation cancelled.', true);
+                                return;
+                            }
+                        }
+                        pollTimer = setTimeout(poll, POLL_INTERVAL_MS);
+                    };
+                    pollTimer = setTimeout(poll, POLL_INTERVAL_MS);
                 };
 
                 // ==================================================
@@ -3809,15 +3971,34 @@
                 // ==================================================
                 const triggerFileInput = () => fileInput.value && fileInput.value.click();
 
+                const chooseFile = (file) => {
+                    if (!file) return;
+                    if (file.size > MAX_UPLOAD_BYTES) {
+                        selectedFile.value = null;
+                        errorMessage.value = `This file is ${formatFileSize(file.size)}. The maximum upload size is 75 MB.`;
+                        return;
+                    }
+                    errorMessage.value = '';
+                    selectedFile.value = file;
+                };
+
                 const handleFileSelect = (e) => {
                     const files = e.target.files;
-                    if (files && files[0]) selectedFile.value = files[0];
+                    if (files && files[0]) chooseFile(files[0]);
                 };
 
                 const handleFileDrop = (e) => {
                     isDragging.value = false;
                     const files = e.dataTransfer.files;
-                    if (files && files[0]) selectedFile.value = files[0];
+                    if (files && files[0]) chooseFile(files[0]);
+                };
+
+                const readErrorDetail = async (res, fallback) => {
+                    try {
+                        const data = await res.json();
+                        if (typeof data.detail === 'string') return data.detail;
+                    } catch (e) { /* Non-JSON error page (e.g. a proxy). */ }
+                    return `${fallback} (HTTP ${res.status})`;
                 };
 
                 const startSeparation = async () => {
@@ -3835,11 +4016,13 @@
                             body: formData
                         });
 
-                        const data = await res.json();
-                        if (!res.ok || !data.success) {
-                            throw new Error(data.detail || data.message || 'Separation request failed.');
+                        if (!res.ok) {
+                            throw new Error(await readErrorDetail(res, 'Separation request failed.'));
                         }
+                        const data = await res.json();
 
+                        progressPercent.value = 0;
+                        statusMessage.value = data.message || '';
                         activeTaskId.value = data.task_id;
                         activeSongTitle.value = selectedFile.value.name;
                         localStorage.setItem('active_stem_task_id', data.task_id);
@@ -3865,11 +4048,10 @@
                         const res = await fetch(`/api/cancel/${encodeURIComponent(activeTaskId.value)}`, {
                             method: 'POST'
                         });
-                        const data = await res.json();
                         if (!res.ok) {
-                            throw new Error(data.detail || 'Cancellation failed.');
+                            throw new Error(await readErrorDetail(res, 'Cancellation failed.'));
                         }
-                        if (pollTimer) clearInterval(pollTimer);
+                        stopPolling();
                         errorMessage.value = 'Separation cancelled.';
                         localStorage.removeItem('active_stem_task_id');
                         activeTaskId.value = null;
@@ -3902,7 +4084,8 @@
                     filename: '',
                     format: 'mp3',
                     quality: '320k',
-                    isDownloading: false
+                    isDownloading: false,
+                    error: ''
                 });
 
                 const exportModalTitle = computed(() => {
@@ -3935,6 +4118,7 @@
                         exportForm.filename = `${baseTitle} - ${exportForm.stemName}`;
                     }
                     exportForm.isDownloading = false;
+                    exportForm.error = '';
                     isDownloadModalOpen.value = true;
                 };
 
@@ -3942,29 +4126,38 @@
                     isDownloadModalOpen.value = false;
                 };
 
-                const executeDownload = () => {
-                    if (!activeTaskId.value) return;
+                // Two steps: wait for the server to finish converting (errors stay in the modal),
+                // then hand the ready file to the browser's own downloader so it streams to disk.
+                const executeDownload = async () => {
+                    if (!activeTaskId.value || exportForm.isDownloading) return;
                     exportForm.isDownloading = true;
+                    exportForm.error = '';
 
-                    let url = '';
-                    const cleanFn = encodeURIComponent(exportForm.filename.trim());
-                    if (exportForm.targetStem === 'all') {
-                        url = `/api/export-all/${encodeURIComponent(activeTaskId.value)}?format=${exportForm.format}&quality=${exportForm.quality}&filename=${cleanFn}`;
-                    } else {
-                        url = `/api/export/${encodeURIComponent(activeTaskId.value)}/${encodeURIComponent(exportForm.targetStem)}?format=${exportForm.format}&quality=${exportForm.quality}&filename=${cleanFn}`;
-                    }
+                    const taskPart = encodeURIComponent(activeTaskId.value);
+                    const base = exportForm.targetStem === 'all'
+                        ? `/api/export-all/${taskPart}`
+                        : `/api/export/${taskPart}/${encodeURIComponent(exportForm.targetStem)}`;
+                    const params = new URLSearchParams({ format: exportForm.format, quality: exportForm.quality });
+                    const requestedName = exportForm.filename.trim();
+                    if (requestedName) params.set('filename', requestedName);
 
-                    const a = document.createElement('a');
-                    a.href = url;
-                    a.style.display = 'none';
-                    document.body.appendChild(a);
-                    a.click();
-                    document.body.removeChild(a);
-
-                    setTimeout(() => {
-                        exportForm.isDownloading = false;
+                    try {
+                        const prepared = await fetch(`${base}?${params}&prepare=true`);
+                        if (!prepared.ok) {
+                            throw new Error(await readErrorDetail(prepared, 'Export failed.'));
+                        }
+                        const a = document.createElement('a');
+                        a.href = `${base}?${params}`;
+                        a.style.display = 'none';
+                        document.body.appendChild(a);
+                        a.click();
+                        document.body.removeChild(a);
                         closeDownloadModal();
-                    }, 800);
+                    } catch (err) {
+                        exportForm.error = err.message || 'Export failed. Check the connection and try again.';
+                    } finally {
+                        exportForm.isDownloading = false;
+                    }
                 };
 
                 // Lifecycle
@@ -3978,8 +4171,8 @@
                 });
 
                 onUnmounted(() => {
-                    stopAllAudio();
-                    if (pollTimer) clearInterval(pollTimer);
+                    destroyAudioInstances();
+                    stopPolling();
                     window.removeEventListener('resize', renderWaveforms);
                     window.removeEventListener('mousemove', onWindowMouseMove);
                     window.removeEventListener('mouseup', onWindowMouseUp);
